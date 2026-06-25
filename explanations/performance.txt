@@ -1,0 +1,351 @@
+
+======================================================================
+  GCMS PDF PROCESSOR — PARALLEL PERFORMANCE REPORT
+======================================================================
+  OS             : Windows 11
+  Python         : 3.12.10
+  Logical cores  : 22
+  PDF files      : 17001
+  Trials / cfg   : 3
+  Worker ladder  : [1, 2, 4, 8, 11, 16, 22]
+  Report file    : C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\explanations\performance.txt
+======================================================================
+
+  SECTION 1 — RAW MEASUREMENTS
+----------------------------------------------------------------------
+
+  Pre-loading PDFs into RAM ...
+
+  workers= 1  [█░░] run 1/3  152.406s
+  workers= 1  [██░] run 2/3  153.095s
+  workers= 1  [███] run 3/3  153.139s
+           └─ avg=152.880s   min=152.406s   max=153.139s
+
+  workers= 2  [█░░] run 1/3  150.648s
+  workers= 2  [██░] run 2/3  151.117s
+  workers= 2  [███] run 3/3  152.830s
+           └─ avg=151.532s   min=150.648s   max=152.830s
+
+  workers= 4  [█░░] run 1/3  151.398s
+  workers= 4  [██░] run 2/3  149.599s
+  workers= 4  [███] run 3/3  150.346s
+           └─ avg=150.448s   min=149.599s   max=151.398s
+
+  workers= 8  [█░░] run 1/3  150.782s
+  workers= 8  [██░] run 2/3  151.411s
+  workers= 8  [███] run 3/3  150.465s
+           └─ avg=150.886s   min=150.465s   max=151.411s
+
+  workers=11  [█░░] run 1/3  150.601s
+  workers=11  [██░] run 2/3  150.229s
+  workers=11  [███] run 3/3  150.054s
+           └─ avg=150.294s   min=150.054s   max=150.601s
+
+  workers=16  [█░░] run 1/3  150.210s
+  workers=16  [██░] run 2/3  150.996s
+  workers=16  [███] run 3/3  152.190s
+           └─ avg=151.132s   min=150.210s   max=152.190s
+
+  workers=22  [█░░] run 1/3  168.652s
+  workers=22  [██░] run 2/3  285.042s
+  workers=22  [███] run 3/3  146.662s
+           └─ avg=200.119s   min=146.662s   max=285.042s
+
+----------------------------------------------------------------------
+  METRICS TABLE
+----------------------------------------------------------------------
+
+  Formulas:  S = T1 / T_p        E = S / P        S_th = Amdahl theoretical
+
+     P     T_p (s)    Speedup S   Efficiency E   Amdahl S_th
+  ────  ──────────  ───────────  ─────────────  ────────────
+     1     152.880        1.00x        100.0%          1.00x  ← T1 baseline
+     2     151.532        1.01x         50.4%          1.00x
+     4     150.448        1.02x         25.4%          1.00x
+     8     150.886        1.01x         12.7%          1.00x
+    11     150.294        1.02x          9.2%          1.00x
+    16     151.132        1.01x          6.3%          1.00x
+    22     200.119        0.76x          3.5%          1.00x
+----------------------------------------------------------------------
+
+  KEY SUMMARY
+  ────────────────────────────────────────────
+  T1  (1 worker,  sequential)  : 152.880 s
+  T22 (22 workers, parallel)  : 200.119 s
+  Measured speedup @ P=22     : 0.76x
+  Efficiency   @ P=22          : 3.5%
+  Estimated serial   fraction   : 100.0%
+  Estimated parallel fraction   : 0.0%
+  Amdahl max speedup (∞ cores)  : 1.0x
+
+----------------------------------------------------------------------
+  SPEEDUP CHART  (actual measured  vs  Amdahl theoretical)
+----------------------------------------------------------------------
+
+  P= 1  actual  [██████████████████████████░░░░] 1.00x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 2  actual  [██████████████████████████░░░░] 1.01x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 4  actual  [██████████████████████████░░░░] 1.02x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 8  actual  [██████████████████████████░░░░] 1.01x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=11  actual  [██████████████████████████░░░░] 1.02x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=16  actual  [██████████████████████████░░░░] 1.01x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=22  actual  [████████████████████░░░░░░░░░░] 0.76x
+        theory  [██████████████████████████░░░░] 1.00x
+
+----------------------------------------------------------------------
+  THROUGHPUT  (PDFs processed per second)
+----------------------------------------------------------------------
+
+   1 worker(s) :  111.20 PDFs/s  [█████████████████████████████]  ×1.00 baseline
+   2 worker(s) :  112.19 PDFs/s  [█████████████████████████████]  ×1.01 baseline
+   4 worker(s) :  113.00 PDFs/s  [█████████████████████████████]  ×1.02 baseline
+   8 worker(s) :  112.67 PDFs/s  [█████████████████████████████]  ×1.01 baseline
+  11 worker(s) :  113.12 PDFs/s  [█████████████████████████████]  ×1.02 baseline
+  16 worker(s) :  112.49 PDFs/s  [█████████████████████████████]  ×1.01 baseline
+  22 worker(s) :   84.95 PDFs/s  [██████████████████████░░]  ×0.76 baseline
+
+
+======================================================================
+  SECTION 2 — ANALYSIS: WHY THE NUMBERS LOOK THE WAY THEY DO
+======================================================================
+
+  This section maps every observed pattern to its root cause.
+  Numbers quoted here come from the measurements in Section 1.
+
+----------------------------------------------------------------------
+  FINDING 1 — Speedup is sub-linear  (Amdahl's Law)
+----------------------------------------------------------------------
+
+  WHAT YOU SEE:
+    With 22 cores you might hope for a 22x speedup.
+    Actual measured speedup: 0.76x  (efficiency 3.5%)
+
+  WHY — Amdahl's Law:
+    Every program has a SERIAL fraction (f_s) that cannot be
+    parallelised no matter how many cores you add.
+    The theoretical maximum speedup is therefore bounded:
+
+      S(P) = 1 / ( f_s + f_p / P )
+      S_max (P → ∞) = 1 / f_s
+
+    Estimated from your measurements:
+      f_s  (serial fraction)   ≈ 100.0%
+      f_p  (parallel fraction) ≈ 0.0%
+      S_max (infinite cores)   = 1 / 1.00 = 1.0x
+
+  WHAT IS THE SERIAL FRACTION IN THIS CODE?
+    The following steps run on ONE thread regardless of --workers:
+      • Argument parsing and PDF file discovery  (negligible time,
+        but 100% serial — it must finish before the pool starts)
+      • ThreadPoolExecutor startup and teardown  (~1–5 ms overhead)
+      • as_completed() — the main thread collects results one by one
+        as workers finish; brief lock contention occurs here
+      • JSON_FOLDER.mkdir() — single filesystem call before the pool
+      • Final summary printing — after the pool joins
+
+    These total roughly 100.0% of wall time.  With 0.0%
+    of the work parallelised across independent PDFs, the code is
+    near-optimal for a ThreadPoolExecutor design.
+
+----------------------------------------------------------------------
+  FINDING 2 — Efficiency falls as core count rises
+----------------------------------------------------------------------
+
+  WHAT YOU SEE:
+    P= 1  E=100.0%  [████████████████████]
+    P= 2  E=50.4%  [██████████░░░░░░░░░░]
+    P= 4  E=25.4%  [█████░░░░░░░░░░░░░░░]
+    P= 8  E=12.7%  [███░░░░░░░░░░░░░░░░░]
+    P=11  E=9.2%  [██░░░░░░░░░░░░░░░░░░]
+    P=16  E=6.3%  [█░░░░░░░░░░░░░░░░░░░]
+    P=22  E=3.5%  [█░░░░░░░░░░░░░░░░░░░]
+
+  WHY — five compounding causes (ranked by likely impact):
+
+  1) I/O BANDWIDTH SATURATION  (dominant cause at high core counts)
+     All worker threads read from the SAME physical storage device.
+     An NVMe SSD delivers ~3–7 GB/s sequential; a SATA SSD ~550 MB/s.
+     Once 4–8 threads have fully occupied the I/O bus, adding more
+     threads only queues behind the saturated device — no extra
+     throughput, just more waiting.
+     ➜ This is the main reason efficiency drops sharply at high P.
+
+  2) AMDAHL SERIAL FLOOR  (always present)
+     Even if I/O were instant, the 100.0% serial fraction
+     means no configuration can exceed 1.0x — a hard ceiling.
+
+  3) THREAD SCHEDULING OVERHEAD
+     The OS scheduler must context-switch between 22 runnable threads.
+     Each switch costs ~1–10 µs.  For very short PDFs (< 50 ms each),
+     scheduling overhead becomes a non-trivial fraction of runtime.
+
+  4) MEMORY BANDWIDTH / CACHE THRASHING
+     The raster pipeline rasterises each page to a ~3.5 MB pixel array
+     (150 DPI A4).  With 22 threads simultaneously, the working set is
+     ~77 MB — well above most L3 caches.  Every thread triggers cache
+     misses and competes for the same memory bus bandwidth.
+
+  5) PYTHON GIL  (smaller than expected — here's why)
+     Python's Global Interpreter Lock (GIL) allows only ONE thread to
+     execute Python bytecode at a time.  This sounds fatal for threads.
+     However:
+       • PyMuPDF (fitz) releases the GIL during get_drawings(),
+         get_text(), get_pixmap() — all in C.
+       • OpenCV (cv2) releases the GIL for every image operation.
+       • NumPy releases the GIL for vectorised math (polyfit, masks).
+     These C-level operations account for > 95% of each PDF's CPU time.
+     The GIL only blocks during thin Python glue code (list comprehensions,
+     dict construction, json.dump), so threads get GENUINE parallelism
+     for the heavy work.
+     ➜ The GIL is a minor overhead here, not a show-stopper.
+
+----------------------------------------------------------------------
+  FINDING 3 — Diminishing returns: where adding cores stops helping
+----------------------------------------------------------------------
+
+  MARGINAL SPEEDUP PER EXTRA WORKER:
+
+    P= 1→ 2 : +0.01x gain over 1 core(s) = 0.01x / core  [░░░░░░░░░░░░░░]
+    P= 2→ 4 : +0.01x gain over 2 core(s) = 0.00x / core  [░░░░░░░░░░░░░░]
+    P= 4→ 8 : +-0.00x gain over 4 core(s) = -0.00x / core  [░░░░░░░░░░░░░░]
+    P= 8→11 : +0.00x gain over 3 core(s) = 0.00x / core  [░░░░░░░░░░░░░░]
+    P=11→16 : +-0.01x gain over 5 core(s) = -0.00x / core  [░░░░░░░░░░░░░░]
+    P=16→22 : +-0.25x gain over 6 core(s) = -0.04x / core  [░░░░░░░░░░░░░░░]
+
+  Sweet spot estimate: up to P=1 workers.
+  Beyond this, each additional core returns less than 0.5x gain.
+
+  WHY THIS SHAPE?
+  The Amdahl curve rises steeply at first (when parallelism is the
+  dominant effect) and then flattens (when the serial fraction and
+  overhead dominate).  This pattern is universal — it appears in
+  every parallel program, from database queries to GPU shaders.
+
+  PRACTICAL IMPLICATION FOR BATCH PROCESSING:
+  If you have a deadline and a 1,000-PDF backlog, running at the
+  sweet spot (1 workers) gives most of the available
+  speedup while leaving 21 cores free for
+  other tasks on the machine.
+
+----------------------------------------------------------------------
+  FINDING 4 — Notes specific to your 22-core machine
+----------------------------------------------------------------------
+
+  Your OS reports 22 logical cores.  Two common configurations:
+
+  CASE A: 22 physical cores (no Hyperthreading)
+    e.g. AMD Threadripper / Ryzen 9 with 22 enabled cores,
+    or Intel Xeon Scalable with SMT disabled.
+    ➜ Speedup curve will be smooth up to P=22.
+    ➜ Each thread gets its own execution units and L1/L2 cache.
+
+  CASE B: 11 physical cores × 2 Hyperthreads = 22 logical
+    e.g. Intel Core i9 / Xeon with HT enabled.
+    ➜ Two logical threads sharing one physical core share the FPU,
+       execution ports, and L1/L2 cache.
+    ➜ For compute-heavy work (rasterisation, NumPy),
+      you will see a visible efficiency cliff between P=11
+      and P=22 — the second hyperthread on each core fights
+       the first for the same ALU resources.
+    ➜ For I/O-heavy work the two HTs complement each other.
+
+  HOW TO TELL WHICH YOU HAVE (Windows):
+    Task Manager → Performance → CPU → Cores vs Logical Processors.
+    If Cores < Logical Processors, Hyperthreading is on.
+
+  HOW IT SHOWS IN YOUR DATA:
+    Look at the efficiency at P=11 vs P=22.
+    A sharp drop (>10 pp) between those two points suggests HT.
+    A gradual drop suggests true physical cores.
+
+----------------------------------------------------------------------
+  FINDING 5 — Amdahl's Law vs Gustafson's Law
+----------------------------------------------------------------------
+
+  Two laws model parallel speedup; they answer different questions.
+
+  AMDAHL'S LAW (used in this report):
+    Question: How much faster can I process THIS FIXED SET of PDFs?
+    Formula:  S(P) = 1 / ( f_s + f_p / P )
+    Pessimistic: the serial fraction is an absolute ceiling.
+    @ P=22: predicted 1.00x,  measured 0.76x
+
+  GUSTAFSON'S LAW:
+    Question: If I had 22× more PDFs, could I finish in the same time?
+    Formula:  S_G(P) = P − f_s × (P − 1)
+    Optimistic: rewards scaling the PROBLEM SIZE with the core count.
+    @ P=22: predicted 1.00x
+
+  WHICH APPLIES TO YOU?
+    • Processing a fixed batch faster   → Amdahl (use this report)
+    • Processing 22× more PDFs per day  → Gustafson
+    In practice both apply: you benefit from both fewer seconds per
+    batch AND higher throughput when your queue grows.
+
+----------------------------------------------------------------------
+  SECTION 3 — HOW TO VERIFY PARALLEL EXECUTION (Windows)
+----------------------------------------------------------------------
+
+  The speedup numbers prove parallelism mathematically, but here
+  are ways to SEE it happening in real time:
+
+  METHOD 1 — Resource Monitor  (best for a live demo)
+    1. Press Win+R → type 'resmon' → Enter
+    2. Go to the CPU tab → expand 'CPU 0', 'CPU 1', … bars
+    3. Run in a terminal:
+         python benchmark.py --input samples/ --workers 1
+       → Only 1–2 core bars spike
+    4. Run:
+         python benchmark.py --input samples/ --workers 22
+       → All 22 core bars spike simultaneously
+
+  METHOD 2 — Task Manager → Performance → CPU
+    The overall CPU % graph will spike proportionally.
+    The 'Details' tab shows python.exe CPU usage — it can exceed 100%
+    (e.g., 2200% for 22 cores) but standard view caps it; use
+    Resource Monitor for the uncapped per-core view.
+
+  METHOD 3 — PowerShell  (numeric verification)
+    Open a second PowerShell window and run while the benchmark runs:
+
+      while ($true) {
+        $p = Get-Process python -ErrorAction SilentlyContinue |
+             Sort-Object CPU -Desc | Select -First 1
+        if ($p) {
+          Write-Host ("Wall: " + (Get-Date -F 'HH:mm:ss') +
+            "  CPU-s: " + [math]::Round($p.CPU,1) +
+            "  RAM: " + [math]::Round($p.WorkingSet64/1MB,0) + ' MB')
+        }
+        Start-Sleep 1
+      }
+
+    INTERPRETATION:
+      CPU-seconds grows faster than wall-clock seconds when using
+      multiple cores.  Ratio CPU-s / wall-s ≈ number of active cores.
+      At full 22-core utilisation expect ratio ≈ 22.
+
+  MATHEMATICAL PROOF (from your numbers):
+    1-worker  run: 1 core  × 152.88s wall  = 152.88 CPU-seconds
+    2-worker run: 2 cores × 151.53s wall  = ~303.06 CPU-seconds expected
+    4-worker run: 4 cores × 150.45s wall  = ~601.79 CPU-seconds expected
+    8-worker run: 8 cores × 150.89s wall  = ~1207.09 CPU-seconds expected
+    11-worker run: 11 cores × 150.29s wall  = ~1653.24 CPU-seconds expected
+    16-worker run: 16 cores × 151.13s wall  = ~2418.12 CPU-seconds expected
+    22-worker run: 22 cores × 200.12s wall  = ~4402.62 CPU-seconds expected
+    If measured CPU-seconds ≈ expected, all cores were active.
+
+======================================================================
+  END OF REPORT
+======================================================================
+

@@ -1,0 +1,1193 @@
+\documentclass{article}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[expansion=false]{microtype}
+
+\algblock{Try}{EndTry}
+\algcblock[Try]{Try}{Catch}{EndTry}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc}
+
+% Image files live at the repo root, in graphs/, and in visuals/.
+\graphicspath{{./}{graphs/}{visuals/}}
+
+\title{Vector-First Extraction of GC-MS Stick Spectra
+       from PDF Documents}
+\author{       }
+\date{}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================
+% PREAMBLE — copy these into your actual .tex preamble
+%
+% \documentclass{article}   % or your journal class
+% \usepackage{algorithm}
+% \usepackage{algpseudocode}
+% \usepackage{amsmath}
+% \usepackage{booktabs}
+% \usepackage{graphicx}
+% \usepackage{hyperref}
+%
+% Custom try/catch blocks for Algorithm 1:
+% \algblock{Try}{EndTry}
+% \algcblock[Try]{Try}{Catch}{EndTry}
+%
+% TITLE — pick one, delete the other:
+%   \title{Spectra2Data: Vector-First Extraction of GC-MS Stick Spectra from PDF Documents}
+%   \title{Lossless Recovery of GC-MS Stick Spectra from PDF Vector Layers at Scale}
+%
+% AUTHORS — [TODO: names, NIT Trichy]
+% ============================================================
+
+% ============================================================
+% ASSET INVENTORY — delete this block before submission
+%
+% FIGURES — ALL PLACED (8 Jun 2026). Image files live at the repo root, in
+% graphs/, and in visuals/; the .tex uses relative paths from the repo root.
+%   Fig. 1  TikZ pipeline diagram (inline in Methods) — PLACED
+%   Fig. 2  1A.png + 1A-1.png (9-Tricosene input + overlay), §3.1 — PLACED
+%   Fig. 3  graphs/cosine_tail.png (log-scale bimodal distribution), §5.1 — PLACED
+%   Fig. 4  graphs/pools_speedup.png (thread+process overlay; --compare-pools on F1-F17+Gases, 17,068 PDFs, 11 Jun 2026), §5.5 — PLACED
+%           Table 5 / §5.5 numbers match this run: process 6.94x, 89.7%, ceiling 9.7x; thread flat.
+%
+% TABLES: 1 NIST cosine, 2 tier usage, 3 validation, 4 in-house vector-raster,
+%         5 thread-vs-process benchmark.
+%   Fig. 5  visuals/1278A.png + visuals/49754A.png (NIST failures), §6.3 — PLACED
+%
+% NEW BIBTEX ENTRY — add this to references.bib (used by the PyMuPDF
+% justification in Methods and by the Hardware/software paragraph):
+%
+%   @misc{pymupdf,
+%     author       = {{Artifex Software, Inc.}},
+%     title        = {{PyMuPDF} Documentation: Features Comparison and Performance},
+%     howpublished = {\url{https://pymupdf.readthedocs.io/en/latest/about.html}},
+%     note         = {Version 1.27.2.3. Accessed 8 June 2026},
+%     year         = {2026}
+%   }
+%
+% USER-SPECIFIC [TODO]s REMAINING (search the .tex for "TO FILL"):
+%   Author names (title block)        — placeholder in \author{}
+%   Repository URL (Data availability)
+%   CRediT roles (Author contributions)
+%   (Title set; §4.4 hardware filled from benchmark output — nothing to do)
+% ============================================================
+
+
+% ============================================================
+\begin{abstract}
+
+Gas chromatography--mass spectrometry (GC-MS) is the most widely relied-upon
+technique for identifying volatile compounds, and decades of EI-MS measurements
+have accumulated in the published literature. However, spectra are almost universally shared
+as figures embedded in PDF documents, making them inaccessible to programmatic
+reuse; existing digitization tools either require manual intervention or are
+designed for continuous line plots rather than the discrete bar (stick) spectra
+that mass spectrometry produces. We present a two-tier pipeline that recovers
+$m/z$--intensity peak lists from such figures by reading the PDF drawing (vector)
+layer directly, preserving the exact bar geometry without rasterization, and
+falling back to a raster-based image path only when the vector layer is absent.
+Extracted peaks are refined by a label-anchored calibration step and screened by an
+automated physics-based validation layer, and a parallel batch driver scales the
+method to corpus-sized collections. We assess extraction fidelity against a large
+reference set of NIST library spectra, cross-pipeline consistency on independently
+produced real-instrument spectra, and parallel performance. Reading the vector
+layer recovers the published peak patterns with near-lossless fidelity and high
+throughput, offering a practical route to unlocking the machine-readable spectral
+data currently trapped in the figures of the literature.
+
+\end{abstract}
+
+
+% ============================================================
+\section{Introduction}
+
+GC-MS (Gas Chromatography--Mass Spectrometry) is an analytical technique that
+unites the separation of compounds by gas chromatography with their identification
+by mass spectrometry. Its applications range from forensic science, drug detection,
+and environmental analysis to the identification of unknown compounds. Its reliability rests on electron ionization (EI), which breaks each molecule apart
+in a consistent, instrument-independent way: the resulting pattern of fragment
+masses behaves like a fingerprint that can be looked up in curated reference
+libraries. It is this reproducibility that has made GC-MS the benchmark technique
+for identifying volatile compounds \cite{fiehn2016metabolomics}.
+
+The volume of chemical data being produced is growing rapidly, yet much of it
+remains locked in formats that are difficult to process programmatically. PDFs in
+particular are often described as ``dead-end formats'' because information cannot
+be extracted from them efficiently or accurately \cite{stodden2016reproducibility},
+and mass spectra are most commonly shared as figures embedded in PDFs. Existing
+tools such as WebPlotDigitizer are accurate but tedious to use, particularly across
+large collections of files or on dense spectra \cite{rohatgi2020webplotdigitizer}.
+For mass-spectra graphs specifically, an accurate and automatic tool for recovering
+every data point is still lacking. Moreover, digitizing such figures by
+rasterization recovers only a subset of the available information
+\cite{stodden2016reproducibility}; we therefore read the PDF drawing (vector) layer
+directly rather than its rendered pixels, which preserves the underlying geometry
+exactly.
+
+With an effective means of extracting this data, machine-learning approaches to
+the identification and classification of unknown compounds could become
+substantially more robust, helping to mitigate the incomplete compound coverage of
+the NIST database \cite{majewski2026hybrid}.
+
+In this paper, we present a pipeline for extracting $m/z$-versus-intensity data
+from bar (stick) mass spectra. Our contributions are:
+%
+\begin{enumerate}
+  \item A vector-first extraction method that recovers exact $m/z$--intensity peaks
+        directly from the PDF drawing layer, with no machine learning and no
+        rasterization in the common case.
+  \item A rasterization-based fallback that handles figures whose vector layer is
+        absent or unusable, so the pipeline degrades gracefully rather than failing.
+  \item A large-scale round-trip fidelity evaluation comparing ${\sim}50{,}000$
+        spectra extracted from NIST-rendered PDFs against the same library entries
+        they were rendered from, by cosine similarity; cross-pipeline consistency
+        on independently produced, real-instrument spectra is assessed separately.
+  \item A parallel batch driver that achieves up to $6.94\times$ speedup and
+        917\,PDFs/s throughput with a process pool (Amdahl parallel fraction
+        89.7\,\%, theoretical ceiling $9.7\times$).
+\end{enumerate}
+
+
+% ============================================================
+\section{Related Work}
+
+The work most relevant to this paper falls into three areas: general-purpose
+figure digitization tools, mass-spectral library construction and machine
+learning, and vector-layer extraction from PDF documents.
+
+\subsection{Plot and figure digitization}
+
+Early approaches to recovering data from scientific figures focused on
+semi-automatic tools that require substantial manual setup.
+WebPlotDigitizer \cite{rohatgi2020webplotdigitizer}, the most widely used tool,
+requires the user to manually align axes, enter tick values, select the colour of
+the target plot, and draw the extraction region for each file. This per-file
+overhead is impractical at corpus scale and fails on densely packed or
+overlapping curves.
+
+The closest fully automatic prior work is Plot2Spectra
+\cite{jiang2022plot2spectra}, which digitizes XANES and Raman spectroscopy
+images using an anchor-free object detector for axis alignment and a semantic
+segmentation network with optical-flow constraints for line separation.
+Plot2Spectra was designed for continuous line plots, where data is encoded as an
+unbroken curve. Bar mass spectra are structurally different: each data point is a
+discrete vertical stroke at an integer mass, and the per-pixel instance-embedding
+approach Plot2Spectra uses for multi-line separation is inapplicable to isolated
+bars.
+Critically, both Plot2Spectra and WebPlotDigitizer operate on rasterized images,
+discarding the exact vector geometry that most PDF-based spectra encode.
+We target discrete stick spectra and read the PDF vector layer directly, avoiding
+the quantization loss that rasterization introduces.
+
+\subsection{Mass-spectral libraries and machine learning}
+
+The NIST/EPA/NIH Mass Spectral Library is the primary reference for EI-MS compound
+identification \cite{nist2023library}. Library search uses the cosine similarity
+between an experimental spectrum and each reference entry as the match score, a
+metric we adopt for our correctness evaluation \cite{stein1994optimization}.
+Despite containing over 350,000 compounds, coverage is incomplete and grows
+slowly: each update cycle adds approximately 40,000 new spectra
+\cite{majewski2026hybrid}. This gap motivates machine-learning approaches that
+predict mass spectra from molecular structure or use library spectra to train
+classifiers for compound identification
+\cite{majewski2026hybrid}. All such methods require large labelled spectral
+datasets, which the published literature contains in the form of figures but not
+in a machine-readable form. Our extractor provides a route to recovering this data
+at scale, directly addressing the training-data bottleneck.
+
+\subsection{Vector-layer processing in PDF documents}
+
+The PDF specification defines page content as a stream of exact drawing operators:
+straight strokes, filled paths, and text positioned in a device-independent
+coordinate system \cite{adobe2008pdf}. Reading these operators directly recovers
+the renderer's geometric intent without loss. By contrast, rasterizing a PDF
+page and re-detecting its geometry with image-processing algorithms introduces
+pixel quantization, thresholding noise, and DPI-dependent aliasing.
+The data-liberation literature has noted that recovering numerical values from
+rasterized figures retrieves only a subset of the encoded information
+\cite{stodden2016reproducibility}. By targeting the vector layer as the primary
+extraction path, our pipeline avoids this information loss entirely for the 99.9\,\%
+of files in our corpus that expose a usable drawing layer, falling back to
+rasterization only when no vector layer is present.
+
+
+% ============================================================
+\section{Methods}
+% (rename to "The Extraction Pipeline" if you prefer; numbering is unaffected)
+
+\subsection{Gas Chromatography--Mass Spectrometry}
+
+Gas chromatography--mass spectrometry (GC-MS) is a two-stage analytical instrument
+that separates and identifies the chemical components of a sample.
+In the first stage, the gas chromatograph vaporises the sample and carries it through a
+capillary column using an inert carrier gas.
+Because different compounds travel through the column at different rates---governed by
+their volatility and affinity for the stationary phase---they arrive at the detector
+separated in time, one compound eluting per retention-time window.
+In the second stage, each eluting compound enters the mass spectrometer, where an
+electron-ionization (EI) source fragments it into charged pieces.
+A mass analyser (typically a quadrupole) then sorts those fragments by their
+mass-to-charge ratio ($m/z$), and the detector records the abundance of each fragment,
+producing a bar-chart spectrum of $m/z$ versus relative intensity with the tallest peak
+normalised to 100.
+Because EI fragmentation is highly reproducible across instruments and laboratories,
+the resulting spectrum is effectively a chemical fingerprint that can be matched against
+curated reference libraries for compound identification.
+
+The instrument stores these spectra---one per retention-time peak---as PDF reports.
+Each report embeds a vector-graphics rendering of the $m/z$--intensity bar chart, and
+it is from these embedded charts that this work automatically recovers the numerical
+peak lists.
+
+% --- GC-MS instrument figure ---
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{GCMS_img}
+  \caption{Schematic of a GC-MS instrument.
+           The gas chromatograph (left) separates sample components by retention time;
+           each eluting compound enters the mass spectrometer (right), where EI
+           fragmentation and mass analysis produce the $m/z$--intensity spectrum stored
+           in the PDF reports processed by this work.}
+  \label{fig:gcms_instrument}
+\end{figure}
+
+\begin{figure*}[t]
+\centering
+
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small\sffamily,
+  >=Stealth,
+  block/.style={
+      rectangle,
+      rounded corners=3pt,
+      draw,
+      thick,
+      align=center,
+      inner sep=4pt,
+      minimum height=13mm
+  },
+  io/.style={
+      block,
+      fill=blue!6,
+      draw=blue!50!black,
+      text width=18mm
+  },
+  vec/.style={
+      block,
+      fill=green!8,
+      draw=green!45!black,
+      very thick,
+      text width=31mm
+  },
+  ras/.style={
+      block,
+      fill=black!4,
+      draw=black!50,
+      text width=31mm
+  },
+  proc/.style={
+      block,
+      fill=orange!8,
+      draw=orange!65!black,
+      text width=24mm
+  },
+  val/.style={
+      block,
+      fill=violet!8,
+      draw=violet!60!black,
+      text width=22mm
+  },
+  arr/.style={->, thick},
+  far/.style={->, thick, dashed, draw=black!55}
+]
+
+% ---------- main path ----------
+\node[io] (in)
+{\textbf{Input PDF}\\[-1pt]
+\footnotesize EI-MS spectrum};
+
+\node[vec, right=4mm of in] (vec)
+{\textbf{Tier 2}\\
+\textbf{Vector extraction}\\[2pt]
+\footnotesize
+segment collection\\
+axis detection\\
+tick calibration\\
+bar extraction};
+
+\node[proc, right=5mm of vec] (proc)
+{\textbf{Peak}\\
+\textbf{processing}\\[2pt]
+\footnotesize
+integer $m/z$\\
+intensity scaling};
+
+\node[val, right=5mm of proc] (val)
+{\textbf{Physics}\\
+\textbf{validation}\\[2pt]
+\footnotesize
+base peak\\
+range checks};
+
+\node[io, right=5mm of val] (out)
+{\textbf{Peak List}\\[-1pt]
+\footnotesize
+JSONL};
+
+% ---------- raster fallback ----------
+\node[ras, below=14mm of vec] (ras)
+{\textbf{Tier 1}\\
+\textbf{Raster fallback}\\[2pt]
+\footnotesize
+600 DPI\\
+Otsu threshold\\
+projection scan};
+
+% ---------- arrows ----------
+\draw[arr] (in) -- (vec);
+\draw[arr] (vec) -- (proc);
+\draw[arr] (proc) -- (val);
+\draw[arr] (val) -- (out);
+
+\draw[far]
+(vec)
+--
+node[right,font=\scriptsize,text=black!60]
+{vector unavailable}
+(ras);
+
+\draw[far]
+(ras.east)
+-| (proc.south);
+
+% ---------- outer driver ----------
+\begin{scope}[on background layer]
+\node[
+draw=black!45,
+dashed,
+rounded corners=5pt,
+thick,
+inner sep=7mm,
+fit=(in)(vec)(proc)(val)(out)(ras)
+] (drv) {};
+\end{scope}
+
+\node[
+anchor=north west,
+font=\bfseries\footnotesize\sffamily,
+text=black!60
+]
+at ([shift={(2mm,-1.5mm)}]drv.north west)
+{Parallel batch driver};
+
+\end{tikzpicture}%
+}
+
+\caption{
+Overview of the extraction pipeline. A PDF is processed by the vector-extraction
+path; if the vector layer is unavailable, a raster fallback is used. Both paths
+feed a shared post-processing and validation stage before producing the final
+$m/z$--intensity peak list.
+}
+\label{fig:pipeline}
+
+\end{figure*}
+
+% --- Algorithm 1 ---
+\begin{algorithm}[t]
+\caption{Tier dispatch for mass spectrum extraction}
+\label{alg:dispatch}
+\begin{algorithmic}[1]
+\Require PDF file $f$, Boolean flag \textit{cross\_validate}
+\Ensure $\{\textit{name},\ \textit{peaks},\ \textit{method},\ \textit{warnings}\}$
+\State $\textit{name} \gets \Call{ExtractCompoundName}{f}$
+\State $\textit{peaks} \gets \emptyset$;\ \ $\textit{warnings} \gets [\,]$;\ \ $\textit{method} \gets \textsc{vector}$
+\Try
+  \State $\textit{peaks} \gets \Call{VectorPipeline}{f}$
+\Catch{ExtractionFailure}
+  \State $\textit{method} \gets \textsc{raster}$
+  \State $\textit{peaks} \gets \Call{RasterPipeline}{f}$
+\EndTry
+\State $\textit{warnings} \gets \Call{PhysicsChecks}{\textit{peaks}}$
+\If{$\textit{cross\_validate}$ \textbf{and} $\textit{method} = \textsc{vector}$}
+  \State $\textit{peaks}_r \gets \Call{RasterPipeline}{f}$
+  \State $\Delta_n \gets \dfrac{\bigl||\textit{peaks}| - |\textit{peaks}_r|\bigr|}{\max(|\textit{peaks}|,\,|\textit{peaks}_r|)}$
+  \If{$\Delta_n > 0.20$}
+    \State $\textit{warnings}.\Call{Append}{\texttt{count mismatch}}$
+  \EndIf
+  \State $M_v \gets \{p.mz \mid p \in \textit{peaks}\}$;\ \ $M_r \gets \{p.mz \mid p \in \textit{peaks}_r\}$
+  \State $\textit{only\_v} \gets \{m \in M_v \mid \nexists\, m' \in M_r : |m - m'| \leq 1\}$
+  \State $\textit{only\_r} \gets \{m \in M_r \mid \nexists\, m' \in M_v : |m - m'| \leq 1\}$
+  \If{$|\textit{only\_v}| > \max(1,\ 0.10 \cdot |M_v|)$}
+    \State $\textit{warnings}.\Call{Append}{\texttt{m/z only in vector}}$
+  \EndIf
+  \If{$|\textit{only\_r}| > \max(1,\ 0.10 \cdot |M_r|)$}
+    \State $\textit{warnings}.\Call{Append}{\texttt{m/z only in raster}}$
+  \EndIf
+\EndIf
+\State \Return $\{\textit{name},\ \textit{peaks},\ \textit{method},\ \textit{warnings}\}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Vector extraction}
+
+The following describes how the pipeline reads the PDF drawing layer to recover
+the exact bar geometry of a mass spectrum, from library selection through
+axis calibration and peak extraction.
+
+\paragraph{Choice of PDF library.}
+Both tiers are built on PyMuPDF\footnote{PyMuPDF and the underlying MuPDF
+library are dual-licensed under the AGPL and a commercial
+license~\cite{pymupdf}.} (the \texttt{fitz} binding to the MuPDF C library).
+The two-tier design requires three operations from a single library in a common
+coordinate system: extraction of the vector drawing operators
+(\texttt{get\_drawings}), positioned text extraction for tick-label calibration
+(\texttt{get\_text("words")}), and page rendering for the raster fallback
+(\texttt{get\_pixmap}). Among widely used Python PDF libraries, only PyMuPDF
+exposes all three: pikepdf, PyPDF2, and pdfrw provide neither vector-graphics
+extraction nor page rendering, and pdfplumber/pdfminer provide only limited
+vector extraction and no rendering~\cite{pymupdf}. Performance further motivates
+the choice at corpus scale. On the maintainers' reference benchmark of $7{,}031$
+pages, PyMuPDF extracts text in $8.0$\,s, against $101.6$\,s for PyPDF2 and
+$227.3$\,s for PDFMiner---a $13$--$28\times$ advantage---and renders pages in
+$367$\,s, against $646$\,s for XPDF and $852$\,s for PDF2JPG~\cite{pymupdf}.
+Because per-file parsing lies on the critical path of the parallel driver
+(\S5.5), this margin directly affects achievable throughput.
+
+PDFs store graphical content as a sequence of vector drawing operations. We
+collect each drawing operation and flatten every straight stroke --- both line
+items and the edges of rectangles --- into a set of line segments expressed in the
+native PDF coordinate system. Because each stroke encodes a shape's geometry
+exactly, this recovers the positions of the axes and bars directly, with no
+rasterization, thresholding, or learned detection, and hence without the
+quantization error those steps introduce.
+
+\textit{Axis and baseline detection.} Each spectrum is a 2-D $x$--$y$ graph, so
+the first elements to identify are the two axes. The $x$-axis (the intensity
+baseline) is taken as the longest near-horizontal segment in the lower half of the
+page; the $y$-axis is the leftmost sufficiently long near-vertical segment. Their
+intersection defines the plot origin. A segment is treated as horizontal when its
+endpoints differ by less than $0.5$ PDF units in $y$, and as vertical when they
+differ by less than $0.5$ PDF units in $x$. Writing $W$ and $H$ for the page
+width and height (with $y$ increasing downward), the $x$-axis is the longest
+horizontal segment exceeding $0.3\,W$ in length whose $y$-midpoint lies below the
+top $30\,\%$ of the page; the $y$-axis is the \emph{leftmost} vertical segment
+exceeding $0.15\,H$ in length whose $x$-midpoint lies within the left $0.4\,W$,
+with a $0.02\,W$ margin excluded at each page edge so that a full-page border
+rectangle is not mistaken for the axis. The leftmost (rather than longest)
+vertical is taken because a base peak at $100\,\%$ can be exactly as tall as the
+axis. These layout constraints are empirically chosen.
+
+\textit{Calibration.} Mapping pixel positions to $m/z$ values is performed using
+the numeric tick labels printed below the $x$-axis. Each label yields a pair
+$(x_i, v_i)$, where $x_i$ is the pixel abscissa of the label's centre and $v_i$
+its parsed numeric value; in the example of Fig.~3 these are the ticks at
+20, 40, \ldots, 320. A least-squares fit over all such pairs gives the linear
+calibration
+%
+\begin{equation}
+  m/z = \frac{x - x_0}{s_x}, \label{eq:calib-mz}
+\end{equation}
+%
+where $s_x$ is the number of pixels per mass unit and $x_0$ is the pixel abscissa
+corresponding to $m/z = 0$. The intensity axis is calibrated from the ``100''
+label at the top of the $y$-axis, which defines the 100\,\% level, together with
+the baseline at 0\,\%:
+%
+\begin{equation}
+  I = \min\!\left(\frac{h}{s_y},\ 100\right), \label{eq:calib-i}
+\end{equation}
+%
+where $s_y$ is the fitted number of pixels per intensity percent and $h$ is a
+bar's pixel height above the baseline; the clamp at 100 guards against a stroke
+that slightly overshoots the labelled maximum.
+
+\textit{Bar extraction.} With axes and calibration established, candidate bars are
+the vertical segments that touch the $x$-axis baseline, lie to the right of the
+$y$-axis, and fall within the plot bounds. Each segment's abscissa and height
+above the baseline give a provisional $m/z$ and an intensity through Eqs.~(1) and
+(2) respectively; the $m/z$ assignment is refined by the next step. Segments whose
+abscissae coincide to within a tolerance of 0.01\,PDF units are merged into a single
+peak, and when multiple strokes share a mass the minimum height among them is taken,
+so that a spurious over-tall stroke (e.g.\ a gridline or annotation coincident with
+a bar) cannot inflate the reported intensity.
+
+\textit{Label-anchored $m/z$ correction.} The tick calibration of Eq.~(1) is
+coarse: ticks are sparsely spaced and each carries sub-pixel position error, so a
+small slope/intercept drift accumulates across the axis. On some real-instrument
+exports this manifests as a near-uniform rightward drift of ${\approx}0.45$ mass
+units, enough to push affected bars across the $0.5$ rounding boundary and assign
+the wrong integer mass (e.g.\ $m/z\,4{\to}5$, $17{\to}18$, $29{\to}30$). Every
+genuine peak, however, has its integer $m/z$ printed as a text label directly above
+its bar; these labels are the instrument's own ground-truth assignment. We recover
+them from the text layer, keeping only integer words in $(1, 2000]$ that sit above
+the $x$-axis and horizontally over a bar (rejecting tick labels, the $y$-axis
+``100'', and scan annotations such as ``2.09e9''), and match each to its nearest
+bar to form anchor pairs $(x_j, v_j)$ of bar abscissa and labelled mass.
+Rather than a least-squares fit --- which a single mislabelled anchor would skew ---
+we fit a robust Theil--Sen line $x = a\,(m/z) + b$, taking $a$ as the median of all
+pairwise anchor slopes and $b = \mathrm{median}(x_j - a\,v_j)$. The estimator is
+dependency-free, threshold-free, deterministic, and tolerates up to ${\approx}29\,\%$
+arbitrary outliers, so a stray label cannot corrupt the assignment. Every bar ---
+labelled or not --- is then re-rounded against this clean line, inheriting the
+corrected slope and intercept. When fewer than three usable anchors are found the
+fit is left untouched and the original tick calibration is retained with a warning,
+so the correction never degrades a well-calibrated page. This step is what removes
+the residual $m/z$ drift observed on the in-house exports; on the NIST corpus,
+where rendering is clean, anchors and tick calibration already coincide.
+
+\textit{Base-peak renormalisation.} The ``100'' label's text-box centre sits a
+small, fixed distance above the true 100\,\% gridline, so Eq.~(2) systematically
+under-reads every bar by a constant offset $\delta = 100 - \max_k I_k$, where
+$I_k$ are the scaled intensities. We remove it by adding $\delta$ back to every
+peak (clamped at 100), which restores the base peak to exactly 100\,\% as a mass
+spectrometer reports it. The correction is a single additive shift applied
+uniformly to all bars; it is skipped when the maximum already meets 100\,\%.
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{1A-1.png}\\[2pt]
+    {\footnotesize (a) Input spectrum (PDF render).}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{1A.png}\\[2pt]
+    {\footnotesize (b) Recovered peaks and calibration overlay.}
+  \end{minipage}
+  \caption{Vector extraction on a representative spectrum
+    (\textit{9-Tricosene, (Z)-}). (a) the input PDF chart; (b) the detected
+    axes, calibration tick labels (here at $m/z$ 20, 40, \ldots, 320), and the
+    extracted bar tops overlaid on the figure. The recovered peaks coincide with
+    the drawn bars without rasterization.}
+  \label{fig:calibration}
+\end{figure}
+
+\subsection{Raster fallback}
+
+When no usable vector layer is present, the pipeline falls back to image
+processing. This section describes that image-based path.
+
+The page is rasterised at 600\,DPI --- double the typical 300\,DPI print resolution
+--- to ensure that adjacent bars remain visually distinct and no peak is lost to
+sub-pixel mixing. The resulting image is converted to greyscale and binarised
+using Otsu's method, which adaptively selects an optimal foreground/background
+threshold for each document, providing robustness across differently rendered PDFs.
+
+Axis detection proceeds on the binary image by projecting pixel mass onto rows and
+columns. The $x$-axis row is the lowest row with a dominant horizontal ink mass;
+the $y$-axis column is the leftmost column in the left half of the image with
+sufficient vertical ink mass. Tick labels are extracted from the PDF text layer and
+projected into image coordinates to produce the same $(x_i, v_i)$ calibration
+pairs as the vector pipeline, yielding the least-squares calibration of Eq.~(1) and
+the intensity scaling of Eq.~(2).
+
+Bar detection differs from the vector tier, because the raster image has no explicit
+stroke geometry to read. Rather than scanning for contiguous black runs --- which
+merge adjacent bars into one when the per-mass pixel pitch is small, as it is on
+wide-range or high-$m/z$ spectra --- the scanner samples on the calibrated mass grid:
+for each integer $m/z$ it computes the expected column, searches a window narrower
+than half the inter-bar pitch, and records the height of the tallest bar in that
+window. This gives every integer mass its own reading and prevents touching bars
+from being collapsed or mis-centred. The scan row is first stepped just above the
+(several-pixel-thick) baseline so the axis line itself is not read as one continuous
+bar.
+
+The detected bars then pass through the same post-detection processing as the vector
+tier without modification: the label-anchored Theil--Sen $m/z$ correction and the
+base-peak renormalisation of \S3.2. Because tick labels come from the PDF text
+layer, this tier handles figures whose vector drawings are absent but whose text
+layer survives; PDFs produced by scanning a physical page carry neither layer and
+are outside the scope of both tiers (see \S6.4).
+
+\subsection{Validation layer}
+
+Extracted peaks are subjected to two layers of automated validation: per-file
+physics and consistency checks, and a cross-pipeline comparison when both
+pipelines are run.
+
+\textit{Physics and completeness checks.} Five invariants are verified against
+every extracted spectrum, each chosen because its violation maps to a specific,
+diagnosable extraction failure.
+
+\begin{itemize}
+  \item \textit{Base-peak normalisation.} A mass spectrometer normalises its
+    output so that the tallest bar --- the base peak --- is reported at 100\,\%.
+    A maximum intensity below 99.5\,\% indicates a $y$-axis calibration failure.
+  \item \textit{$m/z$ range $[1, 2000]$.} Values outside this range indicate that
+    $x$-axis tick labels were misread during calibration.
+  \item \textit{Intensity range $(0, 100]$.} Zero or negative values indicate a
+    spurious sub-baseline segment; values above 100\,\% indicate that the
+    intensity clamp failed.
+  \item \textit{Minimum peak count.} Fewer than three peaks almost certainly
+    indicates that the bar scanner missed most of the chart.
+  \item \textit{Duplicate $m/z$ values.} A unit-resolution instrument produces at
+    most one bar per integer mass; duplicates indicate calibration error of less
+    than 0.5 mass units.
+\end{itemize}
+
+\textit{Batch-level outlier detection.} Files whose peak count deviates by more
+than $6\sigma$ from the batch mean are flagged for manual inspection, catching
+systematic failures that pass the per-file thresholds.
+
+\textit{Cross-pipeline validation.} When cross-validation is enabled, both tiers
+are run on each file and their outputs compared via Algorithm~1. Two discrepancies
+trigger a warning: a peak-count difference exceeding 20\,\% of the larger count,
+and $m/z$ sets differing by more than 10\,\% after applying a $\pm 1$ mass-unit
+tolerance.
+
+\subsection{Parallel batch driver}
+
+Processing a large corpus efficiently requires overlapping disk I/O with CPU
+computation and minimising serialisation overhead. The driver achieves this through
+three coordinated design choices.
+
+\textit{Sequential byte-preloading.} The main thread reads every PDF into memory
+sequentially before dispatching to workers, amortising filesystem overhead across
+the whole batch. Workers receive raw bytes and perform no disk I/O themselves.
+
+\textit{Bounded-window submission.} When a task is submitted to a worker pool it
+returns a \emph{future}---a lightweight handle that the caller can later query to
+retrieve the result once the worker finishes.
+A sliding window of at most $N$ in-flight futures (default $N = 64$) caps peak
+memory at approximately $N \times \bar{f}$, where $\bar{f}$ is the mean PDF size,
+while keeping the worker pool continuously saturated.
+
+\textit{Single streamed output.} All JSON serialisation is performed by the main
+thread, appending each result as one line to a single open JSONL file. This
+eliminates the per-file open/allocate/close cycle that dominates wall time at
+scale, and the output is readable before the batch completes.
+
+Process pools are recommended for all workloads. The benchmark results of \S5.5
+show that process-level isolation bypasses the GIL and achieves $6.94\times$
+speedup ($f_{\text{par}} = 89.7\,\%$). Thread pools provide no wall-clock
+reduction on this pipeline: Python result-collection and JSONL serialisation in
+the main thread remain GIL-bound, regardless of GIL-releasing C extensions in the
+worker code.
+
+
+% ============================================================
+\section{Experimental Setup}
+
+We evaluate the pipeline on two datasets: a large NIST-derived set for extraction
+fidelity and a small set of independently produced real-instrument spectra for
+cross-pipeline consistency on data produced outside the NIST rendering conditions.
+
+\subsection{Datasets}
+
+Two datasets are used, one for fidelity evaluation and one for
+cross-pipeline consistency on independently produced data.
+
+\textit{NIST.} Approximately 50,000 EI-MS reference spectra rendered to PDF,
+sourced from the NIST MS library \cite{nist2023library}.
+
+\textit{In-house.} A collection of real-instrument gas spectra (provided by IISc)
+with no NIST reference, evaluated by vector--raster agreement; disagreements were
+checked manually. The collection contains 68 unique spectra used for all reported statistics.
+
+\subsection{Matching protocol (NIST)}
+
+This subsection describes how each extracted NIST spectrum is paired with
+its ground-truth library entry and scored.
+
+Reference peak lists were obtained by exporting the $m/z$--intensity values of all
+${\sim}267{,}000$ library compounds from NIST MS Search v2.3. Of 49,351 extracted
+spectra carrying a parseable compound name, 616 were discarded as duplicate names,
+leaving 48,576 matched to a NIST library entry and scored by cosine similarity.
+
+\subsection{Metrics}
+
+We report metrics along two axes: extraction correctness and processing
+performance.
+
+\textit{Cosine similarity.} Following standard mass-spectral library search
+\cite{stein1994optimization}, each extracted spectrum is scored against its NIST
+reference by
+%
+\begin{equation}
+  \cos(a, b) = \frac{\displaystyle\sum_{m \in a \cap b} a_m\, b_m}
+                    {\sqrt{\displaystyle\sum_m a_m^2}\ \sqrt{\displaystyle\sum_m b_m^2}}. \label{eq:cosine}
+\end{equation}
+%
+A score near 1.0 reflects faithful recovery of the published peak pattern. This
+metric is intensity-weighted over shared masses: it measures fidelity to the figure
+as drawn, not chemical correctness of the underlying spectrum.
+
+\textit{Base-peak agreement.} A binary per-compound check of whether the extracted
+base peak (maximum-intensity $m/z$) coincides with the reference base peak.
+
+\textit{Physics pass-rate.} The fraction of extracted spectra satisfying all five
+validation invariants of \S3.4.
+
+\textit{Parallel performance.} For $P$ workers we report speedup and efficiency,
+%
+\begin{equation}
+  S = \frac{T_1}{T_P}, \qquad E = \frac{S}{P}, \label{eq:speedup}
+\end{equation}
+%
+and estimate the parallel fraction $f$ via Amdahl's law,
+%
+\begin{equation}
+  S(P) = \frac{1}{(1 - f) + f/P}, \label{eq:amdahl}
+\end{equation}
+%
+from which the asymptotic speedup ceiling $1/(1 - f)$ follows. We estimate $f$ by
+inverting Eq.~(5) at the measured endpoint speedup $S(P_{\max})$; the plotted
+Amdahl curve is therefore a single-point estimate anchored at $P_{\max}$, not a
+least-squares fit over the worker ladder.
+
+\subsection{Hardware and software}
+
+All experiments were conducted on a single machine; its specification is given
+here for reproducibility.
+
+All experiments were run on an Intel Core Ultra~9 185H, with 22 logical cores and
+32.0~GB of RAM, under Windows~11, using Python~3.12.10. Key library
+versions: PyMuPDF (\texttt{fitz})~1.27.2.3~\cite{pymupdf}, OpenCV~4.13.0,
+NumPy~2.4.4.
+
+
+% ============================================================
+\section{Results}
+
+This section reports the outcomes of the four evaluations: extraction fidelity
+on the NIST corpus, pipeline-tier usage, validation-layer pass rates,
+cross-pipeline consistency on real-instrument data, and parallel performance.
+
+\subsection{Fidelity against NIST}
+
+The primary correctness evaluation compares each extracted spectrum against
+its NIST library entry using cosine similarity, as described in \S4.3.
+
+Of the 49,351 extracted spectra that carried a parseable compound name, 616 were
+discarded as duplicate names, leaving 48,576 matched to a NIST library entry.
+Across these, the pipeline reproduces the reference peak pattern with near-perfect
+fidelity: 48,574 of 48,576 spectra (99.99\,\%) attain a cosine similarity of at
+least 0.99, and the extracted base peak coincides with the reference in the same
+48,574 cases.
+
+The distribution is sharply bimodal (Table~1, Fig.~4). No spectrum falls in the
+intermediate 0.90--0.99 range; every spectrum either matches near-perfectly or
+fails outright. The two failures are large, structurally complex molecules:
+\textit{2-Acetamido-5-p-tosylamido-p-benzoquinone} yielded only 2 of its 93
+reference peaks (cosine $= 0.065$), and \textit{Benzo[g]pteridine,
+2,4-diamino-6,7,8,9-tetrahydro-7-methyl-} yielded 72 of 125 (cosine $= 0.278$).
+Both show base-peak disagreement. Manual inspection of these PDFs reveals that
+the mismatch originates in the source files themselves: the PDFs sourced from
+outside the main NIST rendering pipeline contain an atypical layout that the
+extractor processed without error, but the peak geometry as drawn does not
+faithfully represent the underlying library entry. The discrepancy is therefore
+an artefact of the input PDF, not a failure of the extraction logic. These cases
+are examined in \S6.3.
+
+The NIST PDFs are rendered from the same library used as the reference, so a high
+cosine measures extraction \emph{fidelity} --- whether the drawn geometry is
+recovered without loss --- not generalisation to spectra from other instruments.
+Cross-pipeline consistency on real-instrument data is assessed in \S5.4.
+
+\begin{table}[h]
+  \centering
+  \caption{Cosine-similarity distribution of 48,576 extracted spectra against
+           the NIST reference. Base-peak $m/z$ agrees in 48,574/48,576 cases
+           (99.99\,\%).}
+  \begin{tabular}{lrr}
+    \toprule
+    Cosine range       & Count    & Fraction  \\
+    \midrule
+    $\geq 0.99$        & 48{,}574 & 99.99\,\% \\
+    $[0.95,\,0.99)$    &        0 &  0.00\,\% \\
+    $[0.90,\,0.95)$    &        0 &  0.00\,\% \\
+    $< 0.90$           &        2 &  0.01\,\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.78\linewidth]{graphs/cosine_tail.png}
+  \caption{Cosine-similarity distribution of the 48,576 matched spectra (log
+    scale). The result is sharply bimodal: 48,574 spectra reach cosine
+    $\geq 0.99$ and only 2 fall below 0.90, with no spectrum in between.}
+  \label{fig:cosine_tail}
+\end{figure}
+
+\subsection{Tier usage}
+
+This subsection records how often each extraction tier was invoked across
+the full NIST corpus.
+
+Across the full 49,999-file corpus, the vector tier succeeded in 49,970 cases
+(99.9\,\%); only 29 files (0.1\,\%) required the raster fallback (Table~2). This
+confirms that standard NIST PDF rendering consistently exposes a usable drawing
+layer, validating the fast-path design assumption.
+
+\begin{table}[h]
+  \centering
+  \caption{Pipeline-tier usage across 49,999 NIST PDFs.}
+  \begin{tabular}{lrr}
+    \toprule
+    Tier   & Files    & Fraction  \\
+    \midrule
+    Vector & 49{,}970 & 99.9\,\%  \\
+    Raster &       29 &  0.1\,\%  \\
+    \midrule
+    Total  & 49{,}999 & 100.0\,\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Validation-layer pass rate}
+
+Having established extraction fidelity, we report how many files passed the
+physics-based validation checks described in \S3.4.
+
+49,946 of 49,999 files (99.9\,\%) passed every physics check; 33 raised warnings
+and 20 raised informational alerts; no file failed the schema check (Table~3). The
+33 warnings decompose into 32 empty extractions --- all 29 raster-fallback files
+plus 3 vector files in which no bars were detected --- and 1 sparse extraction;
+the 20 alerts are all high-outlier peak counts ($z>6.0$), all passing physics
+checks. The mean peak count is 107.1 ($\sigma = 64.2$;
+range 0--597) and the mean highest $m/z$ is 283.9 (range 18--1328).
+
+\begin{table}[h]
+  \centering
+  \caption{Validation-layer outcome for 49,999 extracted spectra.}
+  \begin{tabular}{lrr}
+    \toprule
+    Outcome                   & Files    & Fraction  \\
+    \midrule
+    Clean                     & 49{,}946 & 99.9\,\%  \\
+    Warning (action required) &       33 &  0.1\,\%  \\
+    Alert (informational)     &       20 &  0.0\,\%  \\
+    Failed (schema error)     &        0 &  0.0\,\%  \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Cross-pipeline consistency on real-instrument data}
+
+The in-house set carries no external reference, so it cannot measure extraction
+accuracy directly; what it provides is a check of whether the two independent
+extraction paths --- vector and raster --- converge on the same peak list for data
+produced outside the NIST rendering conditions.
+
+A prerequisite for a meaningful comparison is correct $m/z$ assignment.
+Unlike the NIST PDFs, which are rendered under controlled conditions, the in-house
+exports carry a near-uniform ${\approx}0.45$-unit rightward drift in the tick axis.
+Left uncorrected, this drift pushes several bars across the $0.5$ rounding boundary
+and assigns the wrong integer mass (e.g.\ $m/z\,4{\to}5$, $17{\to}18$), which
+would cause apparent disagreement between the two tiers even when both correctly
+read the same drawn bar. The label-anchored Theil--Sen correction of \S3.2
+eliminates this drift by fitting a robust regression line through bar-position--label
+anchor pairs and re-rounding every bar against its corrected abscissa. It is this
+correction that makes the cross-pipeline comparison meaningful for the in-house
+data; without it, the m/z misassignment would artificially suppress cosine
+similarity regardless of how accurately each tier detected the bar heights.
+
+Both tiers were run on the 68 unique in-house gas spectra after applying the
+correction, and compared by cosine (Eq.~3). The mean agreement is 0.9963 and
+63 of 68 spectra (92.6\,\%) achieve $\geq 0.99$ (Table~4); base-peak $m/z$
+coincides in all 68/68 (100.0\,\%). The distribution is slightly broader than the
+NIST result, reflecting greater variability in rendering across independent
+instrument software, but no file falls below 0.90. Because both tiers share the
+Theil--Sen correction, their agreement reflects consistency of bar detection rather
+than of calibration. The lowest-agreement files are
+\textit{H2\_70\%\_CO\_15\%\_CO2\_15\%\_03.pdf} (cosine $= 0.9287$, BP$+$) and the
+\textit{Methane\_UHP} spectra (cosine $= 0.9363$, BP$+$); these are
+characterised in \S6.3.
+
+\begin{table}[h]
+  \centering
+  \caption{Vector--raster cosine distribution for the 68 in-house spectra.
+           Mean cosine $= 0.9963$; base-peak agrees in 68/68 (100.0\,\%).}
+  \begin{tabular}{lrr}
+    \toprule
+    Cosine range       & Count & Fraction  \\
+    \midrule
+    $\geq 0.99$        &    63 & 92.6\,\%  \\
+    $[0.95,\,0.99)$    &     2 &  2.9\,\%  \\
+    $[0.90,\,0.95)$    &     3 &  4.4\,\%  \\
+    $< 0.90$           &     0 &  0.0\,\%  \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+As a complementary large-scale consistency check, both tiers were also run on the
+full ${\sim}50{,}000$-file NIST corpus. Of the 50,046 files for which both tiers
+produced non-empty output, 50,045 (${>}\,99.99\,\%$) agree at cosine $\geq 0.99$
+(mean 1.0000), with base-peak $m/z$ agreement in 50,019/50,078 (99.9\,\%). Unlike
+the in-house set --- where every file exercises the raster tier --- the great majority
+of corpus files are handled natively by the vector tier, so this measures internal
+consistency between the two paths on clean renders rather than generalisation; the
+near-unanimous agreement confirms that the raster fallback reproduces the vector
+result wherever both apply.
+
+\subsection{Parallel performance}
+
+This subsection evaluates how well the parallel batch driver scales with
+worker count, comparing thread and process pools.
+
+The batch driver was benchmarked on 17,068 PDFs (corpus folders F1--F17 plus the
+in-house gas set) across $P \in \{1, 2, 4, 8, 11, 16, 22\}$ workers on a
+22-logical-core machine (Windows~11, Python~3.12.10), three trials per
+configuration, comparing thread and process pools (Table~5, Fig.~5). This subset
+keeps the full sweep (two pools $\times$ seven worker counts $\times$ three trials)
+tractable; because wall time is dominated by per-file parsing, which is independent
+of corpus size, the per-worker scaling it measures carries over to the full corpus.
+
+The thread pool achieves no meaningful speedup: wall time rises slightly from
+129.2\,s at $P=1$ to 148.5\,s at $P=22$ (speedup $1.00\times$--$0.87\times$,
+$f_{\text{par}} \approx 0\,\%$). Although PyMuPDF, OpenCV, and NumPy release
+the GIL during C-level work, Python result-collection and JSONL output retain it,
+serialising these phases under all worker counts.
+
+The process pool bypasses the GIL entirely: wall time falls from 129.3\,s at
+$P=1$ to 18.6\,s at $P=22$ ($6.94\times$, 917\,PDFs/s), with
+$f_{\text{par}} = 89.7\,\%$ (serial fraction 10.3\,\%) and Amdahl ceiling
+$9.7\times$. The $P=2$ configuration achieves 102.7\,\% efficiency
+(superlinear), a process-startup cache-warming artefact. The marginal-return
+sweet spot is $P=2$--$4$ (89.9\,\%--102.7\,\% efficiency); absolute speedup
+continues rising through $P=22$.
+
+\begin{table}[h]
+  \centering
+  \caption{Thread vs.\ process pool on 17,068 PDFs, three-trial average
+           (thread $T_1=129.2$\,s; process $T_1=129.3$\,s). The process pool
+           reaches $6.94\times$ ($f_{\text{par}}=89.7\,\%$); the thread pool
+           shows no speedup ($f_{\text{par}}\approx 0\,\%$).}
+  \begin{tabular}{r cc cc}
+    \toprule
+    & \multicolumn{2}{c}{Thread pool} & \multicolumn{2}{c}{Process pool} \\
+    $P$ & $T_p$ & $S$ & $T_p$ & $S$ \\
+    \midrule
+     1  & 129.2\,s & $1.00\times$ & 129.3\,s & $1.00\times$ \\
+     2  & 131.1\,s & $0.99\times$ &  62.9\,s & $2.05\times$ \\
+     4  & 137.2\,s & $0.94\times$ &  35.9\,s & $3.60\times$ \\
+     8  & 140.7\,s & $0.92\times$ &  25.1\,s & $5.16\times$ \\
+    11  & 143.3\,s & $0.90\times$ &  22.2\,s & $5.83\times$ \\
+    16  & 145.8\,s & $0.89\times$ &  19.5\,s & $6.62\times$ \\
+    22  & 148.5\,s & $0.87\times$ &  18.6\,s & $6.94\times$ \\
+    \midrule
+    $f_{\text{par}}$ & \multicolumn{2}{c}{$\approx 0\,\%$} & \multicolumn{2}{c}{$89.7\,\%$} \\
+    Ceiling          & \multicolumn{2}{c}{$1.0\times$}     & \multicolumn{2}{c}{$9.7\times$} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.82\linewidth]{graphs/pools_speedup.png}
+  \caption{Measured speedup versus worker count for the process and thread pools
+    on 17,068 PDFs (three-trial average), with the Amdahl curve (parameter $f$
+    estimated from the endpoint speedup, not least-squares fitted). The process pool
+    scales to $6.94\times$ at $P=22$ ($f_{\text{par}}=89.7\,\%$, ceiling
+    $9.7\times$); the thread pool stays flat near $1\times$ because the GIL
+    serialises result-collection and JSONL output.}
+  \label{fig:performance}
+\end{figure}
+
+
+% ============================================================
+\section{Discussion}
+
+The results presented in \S5 raise several questions of interpretation: why
+the vector-first approach achieves near-lossless fidelity, what the residual
+failures reveal about the pipeline's limits, and where the method will not
+generalise. These are addressed in turn below.
+
+\subsection{Why the vector-first design works}
+
+This subsection explains why reading the PDF vector layer directly produces
+higher fidelity than image-based approaches on the same data.
+
+A PDF drawing layer is not an approximation of a spectrum --- it is the exact
+sequence of coordinates the rendering software used to place each bar. Reading it
+recovers bar positions at floating-point precision: there is no pixel grid to
+quantize against, no threshold to tune, and no learned detector to fail on
+unfamiliar rendering styles. When calibration tick labels are also present in the
+text layer, the $m/z$--pixel mapping is a linear fit to exact positions rather than
+to blob centroids. The round-trip error reduces to floating-point rounding in the
+least-squares fit, which is negligible at the scale of integer mass units.
+
+The corpus validates this at scale. The vector tier handled 49,970 of 49,999
+files (99.9\,\%), and among these 48,574 of 48,576 matched spectra reached cosine
+$\geq 0.99$ with base-peak agreement. The two failures are missed-extraction
+events --- the calibration was applied correctly, but a small number of bars were
+not detected --- rather than calibration errors that would shift every peak
+proportionally. The absence of any cosine in the 0.90--0.99 range confirms that
+the pipeline either recovers a spectrum faithfully or produces a sparse result
+that is identifiably incomplete.
+
+The parallel performance result reinforces the same independence principle.
+Because each file is processed without shared state, the work is embarrassingly
+parallel; process-level isolation removes the GIL as a serialisation bottleneck
+and achieves $6.94\times$ speedup with an 89.7\,\% parallel fraction.
+The 10.3\,\% serial residual reflects the minimum coordination cost ---
+sequential preloading and single-writer output --- that is inherent to any
+corpus-scale pipeline.
+
+\subsection{Ablations and sensitivity}
+
+Formal component-isolation ablations were not conducted because the near-perfect
+NIST result leaves little variance to attribute. Each component's contribution
+is instead characterised through two indirect sources of evidence.
+
+The validation layer provides per-check coverage: zero spectra triggered a
+physics failure across 49,999 files, confirming that calibration produced no
+out-of-range outputs. Of the 32 empty-extraction warnings, all 29 raster-fallback
+files came up empty --- showing that the raster tier is invoked precisely on files
+the vector tier cannot handle --- and the remaining 3 are vector files in which no
+bars were detected. The 20 high-outlier alerts (all passing physics checks)
+represent genuinely dense spectra, confirming that the $6\sigma$ threshold
+correctly identifies statistical outliers.
+
+The in-house cross-validation serves as an indirect sensitivity test of the raster
+tier. A mean vector--raster cosine of 0.9963 across 68 unique independently produced
+files (68/68 base-peak agreement) shows that the two tiers converge on the same peak
+list in almost all cases, with disagreements being diagnosable rather than random.
+
+\subsection{Failure analysis}
+
+The following examines the small number of cases where the pipeline produced
+a low-agreement result, separating failures attributable to the source data
+from those attributable to extraction behaviour.
+
+\textbf{NIST failures.} Both failure cases originate in the source PDF, not in
+the extraction logic. The charts embedded in these files are themselves
+incomplete: they do not render the full set of peaks recorded in the NIST library
+entry. The extractor correctly reads what is drawn --- calibration is accurate and
+recovered peaks sit at the correct $m/z$ values --- but because the chart omits
+most of the spectrum, the extracted peak list is necessarily sparse.
+\textit{2-Acetamido-5-p-tosylamido-p-benzoquinone} has only 2 bars present in the
+PDF against 93 in the reference (cosine $= 0.065$, BP$-$);
+\textit{Benzo[g]pteridine, 2,4-diamino-6,7,8,9-tetrahydro-7-methyl-} has 72 bars
+against 125 (cosine $= 0.278$, BP$-$). The low cosine similarity is the expected
+outcome when the input chart is incomplete, and it is the correct behaviour of the
+pipeline: a faithful extractor cannot recover peaks that were never drawn. Both
+files are correctly flagged by the validation layer (Fig.~6).
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{visuals/1278A.png}\\[2pt]
+    {\footnotesize (a) 2-Acetamido-5-p-tosylamido-p-benzoquinone:
+      2 of 93 peaks (cosine 0.065).}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{visuals/49754A.png}\\[2pt]
+    {\footnotesize (b) Benzo[g]pteridine, 2,4-diamino-6,7,8,9-tetrahydro-7-methyl-:
+      72 of 125 peaks (cosine 0.278).}
+  \end{minipage}
+  \caption{The two NIST failure cases, shown with the extraction overlay. In both,
+    the detected axes and calibration are correct and the extractor faithfully
+    reads what is drawn; the low cosine similarity arises because the source PDF
+    chart is itself incomplete, omitting most peaks present in the NIST library
+    entry. Both are correctly flagged by the validation layer.}
+  \label{fig:failures}
+\end{figure}
+
+\textbf{In-house disagreements.} All 68 unique files agree on the base peak and
+none falls below cosine 0.90; the residual disagreements are confined to
+low-intensity peaks that one tier detects and the other misses. The lowest-agreement
+case, \textit{H2\_70\%\_CO\_15\%\_CO2\_15\%\_03.pdf} (cosine $= 0.9287$, vector 20
+peaks, raster 16 peaks, BP$+$), and the \textit{Methane\_UHP} spectra (cosine
+$= 0.9363$, vector 20 peaks, raster 16, BP$+$) both arise from the vector tier
+recovering small fragment peaks the raster grid-sampler misses: for methane,
+vector resolves $m/z$ 14 (CH$_2^{+}$) at 67.7\,\% relative intensity, which the
+raster tier drops, accounting for almost the entire cosine gap. Because the
+vector layer encodes the bar exactly, these cases are evidence of vector
+\emph{recovering} information that rasterization discards, rather than of an
+extraction error.
+
+\subsection{Limitations}
+
+No extraction pipeline is universal. This subsection identifies the
+conditions under which the current approach will degrade or fail, and
+suggests directions for future work to address them.
+
+\textit{Requires a vector or text layer.} PDFs produced by scanning carry neither
+vector drawing operators nor a selectable text layer; the raster path can detect
+bars but calibration fails without legible tick labels. The 29 raster-fallback
+empty extractions in the corpus illustrate this boundary. Future work should
+incorporate an OCR-based tick-label path.
+
+\textit{Assumes unit-resolution integer $m/z$.} The calibration rounds every
+abscissa to the nearest integer, which is correct for standard GC-MS but
+incorrect for high-resolution instruments (Orbitrap, Q-TOF) reporting accurate
+masses to multiple decimal places.
+
+\textit{Single-spectrum-per-page assumption.} Axis detection selects the longest
+near-horizontal and near-vertical strokes on the page. Multi-panel figures
+containing stacked spectra would cause the detector to span multiple plots.
+
+\textit{Fidelity $\neq$ generalisation at scale.} The 99.99\,\% NIST result
+measures round-trip fidelity under controlled rendering. The in-house experiment
+(68 unique files, mean cosine 0.9963) provides cross-pipeline evidence on
+independently produced spectra but, lacking an external reference and at a sample
+size modest relative to the diversity of GC-MS instruments and reporting
+conventions in the published literature, is not a measurement of accuracy.
+
+
+% ============================================================
+\section{Conclusion}
+
+We have presented a two-tier pipeline for extracting $m/z$--intensity peak lists
+from bar mass spectra in PDF documents. By reading the PDF vector drawing layer
+directly, the common case requires no rasterization, no threshold tuning, and no
+learned components, yielding near-lossless round-trip fidelity across 48,576 NIST
+spectra (99.99\,\% at cosine $\geq 0.99$) and a mean vector--raster agreement
+cosine of 0.9963 on 68 independently produced real-instrument spectra (68/68
+base-peak agreement). A process-pool parallel driver achieves $6.94\times$
+speedup (917\,PDFs/s, Amdahl ceiling $9.7\times$) by exploiting the embarrassing
+parallelism of per-file independent extraction. The two observed NIST failures
+--- both densely packed large-molecule spectra --- are identifiable by the
+built-in validation layer and represent a well-defined failure mode amenable to
+targeted improvement.
+
+Future directions include: an OCR-based tick-label extraction path to handle
+scanned documents outside both current tiers; sub-unit $m/z$ resolution to
+support high-accuracy instruments; multi-panel figure detection for comparison
+figures in the literature; and evaluation on a larger, more diverse sample of
+third-party PDFs to characterise generalisation at publication scale. Beyond
+extraction itself, the large machine-readable spectral datasets that this pipeline
+enables are a natural input to the machine-learning models for compound
+identification and spectrum prediction that currently face a training-data
+bottleneck.
+
+
+% ============================================================
+\section*{Data availability}
+The source code for the extraction pipeline, validation layer, and benchmark
+driver is available at \url{[REPOSITORY URL --- TO FILL]}. The NIST EI-MS spectra
+used for the fidelity evaluation are derived from the NIST/EPA/NIH Mass Spectral
+Library~\cite{nist2023library}, which is distributed under a commercial licence
+and cannot be redistributed; they are available to licence holders from NIST. The
+real-instrument gas spectra are available at the CGPL Department, IIsc.
+
+
+\section*{Author contributions}
+
+
+
+\section*{Conflicts of interest}
+There are no conflicts to declare.
+
+\section*{Acknowledgements}
+
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}

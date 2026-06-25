@@ -1,0 +1,196 @@
+
+======================================================================
+  GCMS PDF PROCESSOR — PARALLEL PERFORMANCE REPORT (imgprocess.py)
+======================================================================
+  OS             : Windows 11
+  Python         : 3.12.10
+  Pool type      : ThreadPoolExecutor
+  Logical cores  : 22
+  PDF files      : 17071
+  Trials / cfg   : 3
+  Worker ladder  : [1, 2, 4, 8, 11, 16, 22]
+  Compare mode   : no
+  Report file    : C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\explanations\performance_new_thread.txt
+======================================================================
+
+  I/O optimisations active in imgprocess.py:
+    1. No per-file JSON writes — workers return dicts, main thread
+       writes one JSONL.  Eliminates N × (create+allocate+close) NTFS ops.
+    2. PDF bytes read sequentially by main thread, passed to workers.
+       Workers do pure CPU work; no per-worker fitz.open() disk access.
+    3. All helper functions (_extract_compound_name, _try_text_peaks,
+       process_pdf_raster) accept pdf_bytes — zero disk I/O in workers.
+
+  SECTION 1 — RAW MEASUREMENTS
+----------------------------------------------------------------------
+
+  Pre-loading PDFs into RAM ...
+
+  --- imgprocess.py ---
+
+  [new] workers= 1  [█░░] run 1/3  128.918s
+  [new] workers= 1  [██░] run 2/3  129.510s
+  [new] workers= 1  [███] run 3/3  129.247s
+               └─ avg=129.225s   min=128.918s   max=129.510s
+
+  [new] workers= 2  [█░░] run 1/3  130.898s
+  [new] workers= 2  [██░] run 2/3  131.472s
+  [new] workers= 2  [███] run 3/3  130.828s
+               └─ avg=131.066s   min=130.828s   max=131.472s
+
+  [new] workers= 4  [█░░] run 1/3  136.433s
+  [new] workers= 4  [██░] run 2/3  139.015s
+  [new] workers= 4  [███] run 3/3  136.116s
+               └─ avg=137.188s   min=136.116s   max=139.015s
+
+  [new] workers= 8  [█░░] run 1/3  141.449s
+  [new] workers= 8  [██░] run 2/3  140.138s
+  [new] workers= 8  [███] run 3/3  140.548s
+               └─ avg=140.712s   min=140.138s   max=141.449s
+
+  [new] workers=11  [█░░] run 1/3  142.641s
+  [new] workers=11  [██░] run 2/3  143.527s
+  [new] workers=11  [███] run 3/3  143.678s
+               └─ avg=143.282s   min=142.641s   max=143.678s
+
+  [new] workers=16  [█░░] run 1/3  145.575s
+  [new] workers=16  [██░] run 2/3  145.724s
+  [new] workers=16  [███] run 3/3  146.148s
+               └─ avg=145.816s   min=145.575s   max=146.148s
+
+  [new] workers=22  [█░░] run 1/3  147.971s
+  [new] workers=22  [██░] run 2/3  149.474s
+  [new] workers=22  [███] run 3/3  148.153s
+               └─ avg=148.533s   min=147.971s   max=149.474s
+
+----------------------------------------------------------------------
+  METRICS TABLE
+----------------------------------------------------------------------
+
+  Formulas:  S = T1 / T_p        E = S / P        S_th = Amdahl theoretical
+
+     P     T_p (s)    Speedup S   Efficiency E   Amdahl S_th
+  ────  ──────────  ───────────  ─────────────  ────────────
+     1     129.225        1.00x        100.0%          1.00x  ← T1 baseline
+     2     131.066        0.99x         49.3%          1.00x
+     4     137.188        0.94x         23.5%          1.00x
+     8     140.712        0.92x         11.5%          1.00x
+    11     143.282        0.90x          8.2%          1.00x
+    16     145.816        0.89x          5.5%          1.00x
+    22     148.533        0.87x          4.0%          1.00x
+----------------------------------------------------------------------
+
+  KEY SUMMARY
+  ────────────────────────────────────────────
+  T1  (1 worker,  sequential)  : 129.225 s
+  T22 (22 workers, parallel)  : 148.533 s
+  Measured speedup @ P=22     : 0.87x
+  Efficiency   @ P=22          : 4.0%
+  Estimated serial   fraction   : 100.0%
+  Estimated parallel fraction   : 0.0%
+  Amdahl max speedup (∞ cores)  : 1.0x
+
+----------------------------------------------------------------------
+  SPEEDUP CHART  (actual vs Amdahl theoretical)
+----------------------------------------------------------------------
+
+  P= 1  actual  [██████████████████████████░░░░] 1.00x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 2  actual  [██████████████████████████░░░░] 0.99x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 4  actual  [█████████████████████████░░░░░] 0.94x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P= 8  actual  [████████████████████████░░░░░░] 0.92x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=11  actual  [████████████████████████░░░░░░] 0.90x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=16  actual  [███████████████████████░░░░░░░] 0.89x
+        theory  [██████████████████████████░░░░] 1.00x
+
+  P=22  actual  [███████████████████████░░░░░░░] 0.87x
+        theory  [██████████████████████████░░░░] 1.00x
+
+----------------------------------------------------------------------
+  THROUGHPUT  (PDFs processed per second)
+----------------------------------------------------------------------
+
+   1 worker(s) :  132.10 PDFs/s  [█████████████████████████]  ×1.00 baseline
+   2 worker(s) :  130.25 PDFs/s  [█████████████████████████]  ×0.99 baseline
+   4 worker(s) :  124.44 PDFs/s  [████████████████████████]  ×0.94 baseline
+   8 worker(s) :  121.32 PDFs/s  [███████████████████████░]  ×0.92 baseline
+  11 worker(s) :  119.14 PDFs/s  [███████████████████████░]  ×0.90 baseline
+  16 worker(s) :  117.07 PDFs/s  [██████████████████████░░]  ×0.89 baseline
+  22 worker(s) :  114.93 PDFs/s  [██████████████████████░░]  ×0.87 baseline
+
+
+======================================================================
+  SECTION 3 — ANALYSIS: WHY THE NUMBERS LOOK THE WAY THEY DO
+======================================================================
+
+  Pool type : ThreadPoolExecutor
+
+----------------------------------------------------------------------
+  FINDING 1 — Speedup is sub-linear  (Amdahl's Law)
+----------------------------------------------------------------------
+
+    Actual measured speedup @ P=22: 0.87x  (efficiency 4.0%)
+
+    S(P) = 1 / ( f_s + f_p / P )
+    Estimated f_s = 100.0%   f_p = 0.0%
+    S_max (P → ∞) = 1.0x
+
+  WHAT IS THE SERIAL FRACTION IN imgprocess.py?
+    • Argument parsing, file discovery (negligible, 100 % serial)
+    • ThreadPoolExecutor startup / teardown
+    • Main-thread byte reading (sequential, overlapped with pool work
+      via the bounded window in _bounded_submit)
+    • JSONL write: ONE open, N buffered writes, ONE close — negligible
+    • Final summary print
+    Per-file JSON open/close/write is GONE, so f_s is lower than
+    in final.py, meaning the Amdahl ceiling is higher.
+
+----------------------------------------------------------------------
+  FINDING 2 — Efficiency falls as core count rises
+----------------------------------------------------------------------
+
+    P= 1  E=100.0%  [████████████████████]
+    P= 2  E=49.3%  [██████████░░░░░░░░░░]
+    P= 4  E=23.5%  [█████░░░░░░░░░░░░░░░]
+    P= 8  E=11.5%  [██░░░░░░░░░░░░░░░░░░]
+    P=11  E=8.2%  [██░░░░░░░░░░░░░░░░░░]
+    P=16  E=5.5%  [█░░░░░░░░░░░░░░░░░░░]
+    P=22  E=4.0%  [█░░░░░░░░░░░░░░░░░░░]
+
+  Primary causes (ranked):
+  1) I/O bandwidth saturation once PDF bytes exceed SSD read bandwidth
+  2) Amdahl serial floor
+  3) Thread scheduling overhead
+  4) Memory bandwidth (raster pipeline: ~3.5 MB pixel array per page)
+  5) Python GIL — minor here: fitz, cv2, numpy all release the GIL
+     during their C-level work (>95% of per-file CPU time).
+
+----------------------------------------------------------------------
+  FINDING 3 — Diminishing returns: sweet spot
+----------------------------------------------------------------------
+
+  MARGINAL SPEEDUP PER EXTRA WORKER:
+
+    P= 1→ 2 : -0.01x/core  [░░░░░░░░░░░░░░]
+    P= 2→ 4 : -0.02x/core  [░░░░░░░░░░░░░░]
+    P= 4→ 8 : -0.01x/core  [░░░░░░░░░░░░░░]
+    P= 8→11 : -0.01x/core  [░░░░░░░░░░░░░░]
+    P=11→16 : -0.00x/core  [░░░░░░░░░░░░░░]
+    P=16→22 : -0.00x/core  [░░░░░░░░░░░░░░]
+
+  Sweet spot estimate: up to P=1 workers.
+  Beyond this each extra core returns < 0.5× gain.
+
+======================================================================
+  END OF REPORT
+======================================================================
+

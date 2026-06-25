@@ -1,0 +1,124 @@
+==============================================================================
+  VECTOR vs RASTER — COSINE SIMILARITY
+==============================================================================
+  Inputs     : 23 path(s)
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Air
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Argon_20ppm
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Atmosphere_air
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\C02_32%_H2BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CH4_10%
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CH4_60%
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CH4_UHP
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CO2_50%_N2BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CO2_UHP
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CO_30%_N2BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\CO_UHP
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\H2_70%_CO_15%_CO2_15%
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Helium_271 ppm_N2 BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Helium_619 ppm_N2 BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Helium_80 ppm_N2 BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\N2_UHP
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\O2_25%_N2BAL
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\O2_UHP
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Producer_gas
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Sulphide Compounds
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Syngas
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Syngas_ppm levels
+               - C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\data\samples\IISc_Data\Gases\Zero Air
+  PDF files  : 68
+  Workers    : 22 (thread pool)
+
+  Cosine as in compare_peaks.py: dot product over shared m/z,
+  divided by the full L2 norm of each spectrum.
+  BP = base-peak (most intense m/z) agreement.
+==============================================================================
+
+    cosine   vec   ras   BP  file
+  --------  ----  ----  ---  ----------------------------------------
+    1.0000    18    18  BP+  Air/Air_01.pdf
+    0.9999    16    15  BP+  Air/Air_02.pdf
+    0.9998    16    14  BP+  Air/Air_03.pdf
+    1.0000    13    13  BP+  Argon_20ppm/Argon_20 ppm_01.pdf
+    1.0000    13    13  BP+  Argon_20ppm/Argon_20 ppm_02.pdf
+    1.0000    14    14  BP+  Argon_20ppm/Argon_20 ppm_03.pdf
+    1.0000    18    18  BP+  Atmosphere_air/Atm_Air_01.pdf
+    0.9999    16    15  BP+  Atmosphere_air/Atm_Air_02.pdf
+    0.9998    16    14  BP+  Atmosphere_air/Atm_Air_03.pdf
+    0.9999    18    17  BP+  C02_32%_H2BAL/C02_32%_H2BAL_1.pdf
+    0.9997    18    16  BP+  C02_32%_H2BAL/C02_32%_H2BAL_2.pdf
+    1.0000    15    15  BP+  C02_32%_H2BAL/C02_32%_H2BAL_3.pdf
+    0.9999    20    19  BP+  CH4_10%/CH4_10%_01.pdf
+    0.9999    23    22  BP+  CH4_10%/CH4_10%_02.pdf
+    0.9999    20    19  BP+  CH4_10%/CH4_10%_03.pdf
+    0.9992    12    11  BP+  CH4_60%/CH4_60%_01.pdf
+    1.0000    14    14  BP+  CH4_60%/CH4_60%_02.pdf
+    1.0000    15    15  BP+  CH4_60%/CH4_60%_03.pdf
+    0.9363    20    16  BP+  CH4_UHP/Methane_UHP_01.pdf
+    0.9409    20    18  BP+  CH4_UHP/Methane_UHP_02.pdf
+    0.9997    14    12  BP+  CH4_UHP/Methane_UHP_03.pdf
+    1.0000    15    15  BP+  CO2_50%_N2BAL/CO2_50%_01.pdf
+    1.0000    15    15  BP+  CO2_50%_N2BAL/CO2_50%_02.pdf
+    0.9943    16    12  BP+  CO2_50%_N2BAL/CO2_50%_03.pdf
+    0.9988    18    15  BP+  CO2_UHP/CO2_UHP_01.pdf
+    0.9993    18    14  BP+  CO2_UHP/CO2_UHP_02.pdf
+    0.9986    18    14  BP+  CO2_UHP/CO2_UHP_03.pdf
+    0.9999    14    13  BP+  CO_30%_N2BAL/CO_30%_01.pdf
+    1.0000    15    15  BP+  CO_30%_N2BAL/CO_30%_02.pdf
+    1.0000    15    14  BP+  CO_30%_N2BAL/CO_30%_03.pdf
+    1.0000    15    14  BP+  CO_UHP/CO_UHP_01.pdf
+    1.0000    14    14  BP+  CO_UHP/CO_UHP_02.pdf
+    1.0000    15    15  BP+  CO_UHP/CO_UHP_03.pdf
+    0.9883    19    16  BP+  H2_70%_CO_15%_CO2_15%/H2_70%_CO_15%_CO2_15%_01.pdf
+    1.0000    20    20  BP+  H2_70%_CO_15%_CO2_15%/H2_70%_CO_15%_CO2_15%_02.pdf
+    0.9287    20    16  BP+  H2_70%_CO_15%_CO2_15%/H2_70%_CO_15%_CO2_15%_03.pdf
+    1.0000    14    13  BP+  Helium_271 ppm_N2 BAL/Helium_271 ppm_N2 BAL_01.pdf
+    1.0000    15    15  BP+  Helium_271 ppm_N2 BAL/Helium_271 ppm_N2 BAL_02.pdf
+    1.0000    13    13  BP+  Helium_271 ppm_N2 BAL/Helium_271 ppm_N2 BAL_03.pdf
+    0.9999    13    11  BP+  Helium_619 ppm_N2 BAL/Helium_619 ppm_N2 BAL_01.pdf
+    1.0000    11    11  BP+  Helium_619 ppm_N2 BAL/Helium_619 ppm_N2 BAL_02.pdf
+    1.0000    14    13  BP+  Helium_619 ppm_N2 BAL/Helium_619 ppm_N2 BAL_03.pdf
+    0.9999    14    13  BP+  Helium_80 ppm_N2 BAL/Helium_80 ppm_N2 BAL_01.pdf
+    0.9999    12    10  BP+  Helium_80 ppm_N2 BAL/Helium_80 ppm_N2 BAL_02.pdf
+    0.9999    13    11  BP+  Helium_80 ppm_N2 BAL/Helium_80 ppm_N2 BAL_03.pdf
+    1.0000    14    13  BP+  N2_UHP/N2_UHP_01.pdf
+    1.0000    15    14  BP+  N2_UHP/N2_UHP_02.pdf
+    1.0000    12    12  BP+  N2_UHP/N2_UHP_03.pdf
+    1.0000    25    24  BP+  O2_25%_N2BAL/O2_25%_01.pdf
+    1.0000    24    21  BP+  O2_25%_N2BAL/O2_25%_02.pdf
+    1.0000    23    23  BP+  O2_25%_N2BAL/O2_25%_03.pdf
+    1.0000    14    14  BP+  O2_UHP/O2_UHP_01.pdf
+    1.0000    14    14  BP+  O2_UHP/O2_UHP_02.pdf
+    1.0000    14    14  BP+  O2_UHP/O2_UHP_03.pdf
+    1.0000    20    20  BP+  Producer_gas/Producer_gas_01.pdf
+    0.9997    20    20  BP+  Producer_gas/Producer_gas_02.pdf
+    1.0000    18    18  BP+  Producer_gas/Producer_gas_03.pdf
+    1.0000    17    17  BP+  Sulphide Compounds/Sulphide_Compounds_01.pdf
+    1.0000    18    18  BP+  Sulphide Compounds/Sulphide_Compounds_02.pdf
+    0.9970    25    22  BP+  Sulphide Compounds/Sulphide_Compounds_03.pdf
+    0.9690    21    17  BP+  Syngas/Syngas_01.pdf
+    1.0000    22    22  BP+  Syngas/Syngas_02.pdf
+    1.0000    20    20  BP+  Syngas/Syngas_03.pdf
+    0.9996    16    13  BP+  Syngas_ppm levels/SynGas_ppm_01.pdf
+    1.0000    14    14  BP+  Syngas_ppm levels/SynGas_ppm_02.pdf
+    1.0000    15    14  BP+  Zero Air/Zero Air_01.pdf
+    1.0000    15    15  BP+  Zero Air/Zero Air_02.pdf
+    1.0000    17    16  BP+  Zero Air/Zero Air_03.pdf
+
+==============================================================================
+  SUMMARY
+==============================================================================
+  total files            : 68
+  both pipelines empty   : 0 (no peaks either side — excluded from cosine)
+  one pipeline empty     : 0 (excluded from cosine)
+  scored (both non-empty): 68
+
+      >=0.99:   63 ( 92.6%)
+   0.95-0.99:    2 (  2.9%)
+   0.90-0.95:    3 (  4.4%)
+       <0.90:    0 (  0.0%)
+
+  mean cosine          : 0.9963
+  min  cosine          : 0.9287
+  base-peak m/z agrees : 68/68 (100.0%)
+==============================================================================
+

@@ -1,0 +1,62 @@
+\begin{thebibliography}{1}
+
+\bibitem{fiehn2016metabolomics}
+Oliver Fiehn.
+\newblock Metabolomics by gas chromatography--mass spectrometry: Combined
+  targeted and untargeted profiling.
+\newblock {\em Current Protocols in Molecular Biology}, 114(1):30.4.1--30.4.32,
+  2016.
+
+\bibitem{stodden2016reproducibility}
+Victoria Stodden, Marcia McNutt, David~H. Bailey, Ewa Deelman, Yolanda Gil,
+  Brooks Hanson, Michael~A. Heroux, John P.~A. Ioannidis, and Michela Taufer.
+\newblock Enhancing reproducibility for computational methods.
+\newblock {\em Science}, 354(6317):1240--1241, 2016.
+
+\bibitem{rohatgi2020webplotdigitizer}
+Ankit Rohatgi.
+\newblock {WebPlotDigitizer}.
+\newblock \url{https://automeris.io/WebPlotDigitizer}, 2020.
+\newblock Version 4.4. Accessed 8 June 2026.
+
+\bibitem{majewski2026hybrid}
+Stanislaw Majewski et~al.
+\newblock Hybrid machine-learning approaches for mass-spectral compound
+  identification.
+\newblock {\em (to be confirmed)}, 2026.
+\newblock Placeholder entry --- verify bibliographic details.
+
+\bibitem{jiang2022plot2spectra}
+Weixin Jiang, Kyle Spurlock, Nicola Ferrier, Nestor Zaluzec, and Jingrui Wei.
+\newblock {Plot2Spectra}: An automatic spectra extraction tool using deep
+  learning.
+\newblock {\em arXiv preprint arXiv:2107.02827}, 2021.
+\newblock \url{https://arxiv.org/abs/2107.02827}.
+
+\bibitem{nist2023library}
+{National Institute of Standards and Technology}.
+\newblock {NIST/EPA/NIH} mass spectral library ({NIST} 23).
+\newblock Standard Reference Database 1A, 2023.
+\newblock \url{https://www.nist.gov/srd/nist-standard-reference-database-1a}.
+
+\bibitem{stein1994optimization}
+Stephen~E. Stein and Donald~R. Scott.
+\newblock Optimization and testing of mass spectral library search algorithms
+  for compound identification.
+\newblock {\em Journal of the American Society for Mass Spectrometry},
+  5(9):859--866, 1994.
+
+\bibitem{adobe2008pdf}
+{International Organization for Standardization}.
+\newblock Document management --- portable document format --- part~1:
+  {PDF}~1.7 ({ISO}~32000-1:2008).
+\newblock ISO Standard, 2008.
+\newblock \url{https://www.iso.org/standard/51502.html}.
+
+\bibitem{pymupdf}
+{Artifex Software, Inc.}
+\newblock {PyMuPDF} documentation: Features comparison and performance.
+\newblock \url{https://pymupdf.readthedocs.io/en/latest/about.html}, 2026.
+\newblock Version 1.27.2.3. Accessed 8 June 2026.
+
+\end{thebibliography}

@@ -1,0 +1,2144 @@
+================================================================================
+  COMPLETE CODE EXPLANATION
+  GCMS Mass-Spectrum PDF Processor
+================================================================================
+  Files covered:
+    1. final.py     — Main processor (vector + raster pipelines)
+    2. validate.py  — Automated quality checker for JSON outputs
+    3. benchmark.py — Parallel performance benchmarker
+================================================================================
+
+
+================================================================================
+  FILE 1 — final.py
+  GCMS Mass-Spectrum PDF Processor
+================================================================================
+
+--------------------------------------------------------------------------------
+  SECTION 1 — MODULE DOCSTRING
+--------------------------------------------------------------------------------
+
+  CODE:
+    """
+    Optimized mass-spectrum PDF processor.
+
+    Two pipelines:
+      - process_pdf_vector(): Tier 2 fast path. Reads vector drawings directly,
+        no rasterization. ~10-50x faster than the raster pipeline.
+      - process_pdf_raster(): Tier 1 tuned version of the original. Lower DPI,
+        no visualization output, fallback when vector extraction fails.
+
+    Public entrypoint: process_pdf() tries vector first, falls back to raster.
+    """
+
+  WHAT IT DOES:
+    A triple-quoted string at the top of the file. Python treats this as the
+    module's __doc__ attribute, accessible via help(module) or module.__doc__.
+
+  WHY IT WAS USED:
+    Documents the two-pipeline architecture at a glance. Anyone opening the
+    file understands the design before reading a single line of code.
+
+  ALTERNATIVES:
+    - Inline # comments: Less formal, not accessible via help().
+    - A separate README: Better for end-users but not co-located with code.
+    - No docstring: Common but makes maintenance harder.
+
+
+--------------------------------------------------------------------------------
+  SECTION 2 — IMPORTS
+--------------------------------------------------------------------------------
+
+  CODE:
+    import fitz
+    import cv2
+    import numpy as np
+    import json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+    import os
+    import argparse
+    from pathlib import Path
+
+  import fitz
+    WHAT: Imports PyMuPDF (the package is named "fitz" for historical reasons).
+    WHY:  The only Python library that exposes a PDF's raw vector drawing layer
+          via get_drawings(), making the fast vector pipeline possible.
+    ALTERNATIVES:
+      - pdfplumber: Good for tables/text but no drawing primitives.
+      - pypdf: Text extraction only, no vector graphics.
+      - Poppler via subprocess: External dependency, harder to deploy.
+
+  import cv2
+    WHAT: Imports OpenCV (opencv-python).
+    WHY:  Used for image processing in the raster pipeline (Otsu thresholding)
+          and for drawing debug overlay visuals (lines, circles, rectangles).
+    ALTERNATIVES:
+      - PIL/Pillow: Simpler API but far fewer image-processing primitives.
+      - scikit-image: More Pythonic but slower for pixel-level loops.
+
+  import numpy as np
+    WHAT: Imports NumPy for array operations.
+    WHY:  All segment filtering in _extract_bars() uses vectorised boolean
+          masks — orders of magnitude faster than Python loops. Also used for
+          np.polyfit() (linear regression for axis calibration).
+    ALTERNATIVES:
+      - Pure Python lists with loops: Correct but 10-100x slower on large arrays.
+      - pandas: Overkill; NumPy is sufficient for plain numeric arrays.
+
+  import json
+    WHAT: Standard library JSON encoder/decoder.
+    WHY:  Writes each spectrum's peaks and warnings to a .json file.
+    ALTERNATIVES:
+      - orjson: 5-10x faster serialisation, but a third-party dependency.
+      - csv: Less expressive; cannot easily store nested structures.
+
+  from concurrent.futures import ThreadPoolExecutor, as_completed
+    WHAT: Imports the thread-pool and a helper that yields futures as they finish.
+    WHY:  Enables parallel processing of multiple PDFs. ThreadPoolExecutor is
+          chosen over ProcessPoolExecutor because PyMuPDF/OpenCV release the
+          GIL during C-level work, so threads get genuine parallelism.
+    ALTERNATIVES:
+      - multiprocessing.Pool: True process-level parallelism, better for pure
+        CPU-bound Python, but higher overhead and harder to share state.
+      - asyncio: Designed for async I/O, not CPU-bound tasks.
+
+  import time
+    WHAT: Standard library timing.
+    WHY:  time.time() measures per-file processing duration, stored in the
+          returned dict for progress reporting.
+
+  import os
+    WHAT: Standard library OS interface.
+    WHY:  os.cpu_count() auto-sizes the thread pool to the number of logical
+          CPU cores.
+
+  import argparse
+    WHAT: Standard library CLI argument parser.
+    WHY:  Provides --input, --workers, --cross-validate, --visual flags with
+          built-in help text and type validation.
+    ALTERNATIVES:
+      - sys.argv: Manual, error-prone, no auto-generated help.
+      - click / typer: More ergonomic, but third-party dependencies.
+
+  from pathlib import Path
+    WHAT: Object-oriented path class from standard library.
+    WHY:  Path objects allow clean manipulation (/, .stem, .suffix, .glob())
+          without string concatenation, and work on both Windows and Linux.
+    ALTERNATIVES:
+      - os.path: Functional style, works, but verbose.
+      - Plain strings: Fragile on Windows (backslash vs forward-slash).
+
+
+--------------------------------------------------------------------------------
+  SECTION 3 — CONFIG
+--------------------------------------------------------------------------------
+
+  CODE:
+    JSON_FOLDER    = Path("outputs")
+    VISUALS_FOLDER = Path("visuals")
+    RASTER_DPI     = 150
+    WRITE_VISUALS  = True
+
+  JSON_FOLDER / VISUALS_FOLDER
+    WHAT: Module-level constants for output directories.
+    WHY:  Centralised — change the output location in one place, not scattered
+          across functions.
+    ALTERNATIVES:
+      - Hardcoded strings inside functions: Harder to maintain.
+      - A config file (YAML/TOML): Better for large projects; overkill here.
+
+  RASTER_DPI = 150
+    WHAT: DPI used when rasterising a PDF page for the raster pipeline.
+    WHY:  150 DPI gives ~1240x960px for a typical A4 PDF — enough resolution
+          to detect bar heights accurately without excessive memory cost.
+          300 DPI would improve accuracy marginally but quadruple the pixels.
+
+  WRITE_VISUALS = True
+    WHAT: Default flag controlling whether debug overlay PNGs are saved.
+    WHY:  True means every run produces a visual for inspection.
+
+
+--------------------------------------------------------------------------------
+  SECTION 4 — _collect_line_segments()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _collect_line_segments(drawings):
+        """Flatten all line items from every drawing into a list of segments.
+
+        Returns list of (x0, y0, x1, y1) in PDF coordinates.
+        Also includes vertical sides of filled rectangles in case bars are drawn
+        as rects rather than lines.
+        """
+        segs = []
+        for d in drawings:
+            for item in d.get("items", []):
+                kind = item[0]
+                if kind == "l":
+                    p1, p2 = item[1], item[2]
+                    segs.append((p1.x, p1.y, p2.x, p2.y))
+                elif kind == "re":
+                    r = item[1]
+                    segs.append((r.x0, r.y0, r.x0, r.y1))
+                    segs.append((r.x1, r.y0, r.x1, r.y1))
+        return segs
+
+  WHAT IT DOES:
+    Takes the raw list of drawing objects from page.get_drawings() and
+    flattens them into a simple list of (x0, y0, x1, y1) coordinate tuples.
+    Also extracts the left/right vertical edges of any filled rectangles,
+    because some PDFs draw bars as rects rather than plain lines.
+
+  KEY LINE EXPLANATIONS:
+
+    segs = []
+      → Accumulator list. All segments found across all drawings go here.
+
+    for d in drawings:
+      → Each "d" is a dict describing one vector path on the page
+        (a line, rectangle, curve, etc.).
+
+    for item in d.get("items", []):
+      → Each drawing can contain multiple sub-items. .get("items", [])
+        safely handles drawings with no items key — avoids a KeyError
+        on malformed or unusual PDFs.
+
+    kind = item[0]
+      → First element of each item tuple is a type code:
+          "l"  = straight line
+          "re" = rectangle
+          "c"  = Bezier curve
+
+    if kind == "l":
+        p1, p2 = item[1], item[2]
+        segs.append((p1.x, p1.y, p2.x, p2.y))
+      → Lines are the primary way bars are drawn in GCMS PDFs.
+        item[1] and item[2] are fitz.Point objects with .x and .y attributes.
+
+    elif kind == "re":
+        r = item[1]
+        segs.append((r.x0, r.y0, r.x0, r.y1))
+        segs.append((r.x1, r.y0, r.x1, r.y1))
+      → Filled rectangles: both the left (x0) and right (x1) vertical edges
+        are treated as separate line segments. This way _extract_bars() works
+        identically whether bars are lines or rectangles.
+
+  WHY IT WAS USED:
+    get_drawings() returns a complex nested structure. This helper normalises
+    it into a flat list that downstream functions can vectorise with NumPy.
+
+  ALTERNATIVES:
+    - Process drawings inline in process_pdf_vector(): Mixes concerns.
+    - Generator instead of list: Saves memory; unnecessary at this scale.
+
+
+--------------------------------------------------------------------------------
+  SECTION 5 — _find_baseline_and_yaxis()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _find_baseline_and_yaxis(segs, page_w, page_h):
+        """Identify the x-axis and y-axis.
+        Returns (xaxis_y, yaxis_x, xaxis_x_right) or (None, None, None)."""
+
+        h_segs = [(x0, y0, x1, y1) for x0, y0, x1, y1 in segs
+                  if abs(y1 - y0) < 0.5 and abs(x1 - x0) > page_w * 0.3]
+        v_segs = [(x0, y0, x1, y1) for x0, y0, x1, y1 in segs
+                  if abs(x1 - x0) < 0.5 and abs(y1 - y0) > page_h * 0.15]
+
+        if not h_segs or not v_segs:
+            return None, None, None
+
+        h_segs_lower = [s for s in h_segs if (s[1] + s[3]) / 2 > page_h * 0.3] or h_segs
+        xaxis = max(h_segs_lower, key=lambda s: abs(s[2] - s[0]))
+        xaxis_y       = (xaxis[1] + xaxis[3]) / 2
+        xaxis_x_right = max(xaxis[0], xaxis[2])
+
+        v_segs_left = [s for s in v_segs if (s[0] + s[2]) / 2 < page_w * 0.4] or v_segs
+        yaxis   = max(v_segs_left, key=lambda s: abs(s[3] - s[1]))
+        yaxis_x = (yaxis[0] + yaxis[2]) / 2
+
+        return xaxis_y, yaxis_x, xaxis_x_right
+
+  WHAT IT DOES:
+    Scans all segments to identify the chart's x-axis (the long horizontal
+    baseline) and y-axis (the tall vertical left edge). Returns:
+      - xaxis_y:       y-coordinate of the x-axis in PDF units
+      - yaxis_x:       x-coordinate of the y-axis in PDF units
+      - xaxis_x_right: rightmost x of the x-axis (the chart's right edge)
+
+  KEY LINE EXPLANATIONS:
+
+    h_segs = [... abs(y1-y0) < 0.5 and abs(x1-x0) > page_w * 0.3]
+      → Filters to nearly horizontal segments (y-delta < 0.5 PDF points)
+        longer than 30% of page width. The x-axis is the dominant long
+        horizontal line. 0.5 and 0.3 are empirically tuned tolerances.
+
+    v_segs = [... abs(x1-x0) < 0.5 and abs(y1-y0) > page_h * 0.15]
+      → Filters to nearly vertical segments taller than 15% of page height.
+        The 15% threshold excludes the bar segments (shorter than the y-axis).
+
+    if not h_segs or not v_segs: return None, None, None
+      → Fail fast. If no qualifying axes are found, the caller raises
+        RuntimeError and falls back to the raster pipeline.
+
+    h_segs_lower = [s for s in h_segs if (s[1]+s[3])/2 > page_h * 0.3] or h_segs
+      → Restricts to horizontal segments in the lower 70% of the page.
+        "or h_segs" is a safety fallback if no segments are in the lower half.
+
+    xaxis = max(h_segs_lower, key=lambda s: abs(s[2] - s[0]))
+      → Picks the LONGEST horizontal segment as the x-axis.
+
+    xaxis_y = (xaxis[1] + xaxis[3]) / 2
+      → Averages both y-endpoints for a precise position (handles slightly
+        non-horizontal axes due to PDF drawing imprecision).
+
+    xaxis_x_right = max(xaxis[0], xaxis[2])
+      → The rightmost x-coordinate of the x-axis — the chart's right boundary.
+        Used later to exclude bars that fall outside the chart area.
+
+    v_segs_left = [... (s[0]+s[2])/2 < page_w * 0.4] or v_segs
+      → Restricts to vertical segments in the left 40% of the page. Prevents
+        a tall bar in the middle of the chart from being mistaken for the y-axis.
+
+    yaxis = max(v_segs_left, key=lambda s: abs(s[3] - s[1]))
+      → Picks the TALLEST vertical segment in the left zone as the y-axis.
+
+
+--------------------------------------------------------------------------------
+  SECTION 6 — _calibrate()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _calibrate(page, xaxis_y, yaxis_x):
+        """Use vector text to find pixels-per-unit on x and pixels-per-percent on y.
+        Returns (pixels_per_unit, x_intercept_pixel, pixels_per_pct) — any may be None."""
+        words = page.get_text("words")
+
+        x_ticks = []
+        for x0, y0, x1, y1, text, *_ in words:
+            if y0 > xaxis_y and y0 < xaxis_y + 40 and x0 > yaxis_x - 5:
+                try:
+                    val = float(text)
+                    x_ticks.append(((x0 + x1) / 2, val))
+                except ValueError:
+                    pass
+
+        pixels_per_unit = x_intercept = None
+        if len(x_ticks) >= 2:
+            xs = np.array([t[0] for t in x_ticks])
+            vs = np.array([t[1] for t in x_ticks])
+            pixels_per_unit, x_intercept = np.polyfit(vs, xs, 1)
+
+        pixels_per_pct = None
+        for x0, y0, x1, y1, text, *_ in words:
+            if text.strip() == "100" and x1 < yaxis_x + 5:
+                mid_y = (y0 + y1) / 2
+                pixels_per_pct = abs(xaxis_y - mid_y) / 100.0
+                break
+
+        return pixels_per_unit, x_intercept, pixels_per_pct
+
+  WHAT IT DOES:
+    Reads the text labels on both axes and builds two calibration values:
+      - pixels_per_unit: PDF units per one m/z unit (x-axis scale factor)
+      - pixels_per_pct:  PDF units per 1% intensity (y-axis scale factor)
+    These convert raw bar positions into meaningful m/z and intensity values.
+
+  KEY LINE EXPLANATIONS:
+
+    words = page.get_text("words")
+      → Returns all words on the page with bounding boxes as a list of
+        (x0, y0, x1, y1, text, block_no, line_no, word_no). Vector text
+        extraction — exact coordinates, no OCR needed.
+
+    for x0, y0, x1, y1, text, *_ in words:
+        if y0 > xaxis_y and y0 < xaxis_y + 40 and x0 > yaxis_x - 5:
+      → Filters to words just below the x-axis (between xaxis_y and
+        xaxis_y+40 PDF units) and right of the y-axis. These are x-axis
+        tick labels (m/z numbers). The *_ discards block/line/word indices.
+
+    try: val = float(text)
+      → Attempts to parse each candidate word as a number. Non-numeric text
+        (like the "m/z" axis label) raises ValueError and is skipped.
+
+    x_ticks.append(((x0 + x1) / 2, val))
+      → Stores (pixel_centre_x, m/z_value) pairs for calibration fitting.
+
+    pixels_per_unit, x_intercept = np.polyfit(vs, xs, 1)
+      → Fits a straight line through all (m/z → pixel_x) pairs using
+        least-squares linear regression. Degree 1 gives:
+          slope     = pixels_per_unit (PDF units per m/z)
+          intercept = pixel position of m/z = 0
+        Using all tick labels (not just two) is more robust to one
+        misread or misaligned label.
+
+    if text.strip() == "100" and x1 < yaxis_x + 5:
+      → Finds the "100" label on the y-axis. Always present in a normalised
+        GCMS spectrum (the 100% intensity marker).
+
+    pixels_per_pct = abs(xaxis_y - mid_y) / 100.0
+      → Vertical distance from the "100" label to the x-axis baseline,
+        divided by 100, gives PDF units per 1% intensity.
+
+
+--------------------------------------------------------------------------------
+  SECTION 7 — _extract_bars()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _extract_bars(segs, xaxis_y, yaxis_x, xaxis_x_right):
+        """Find vertical line segments whose bottom sits on the x-axis baseline
+        and which are right of the y-axis. Returns list of (x_pdf, height_pdf)."""
+        if not segs:
+            return []
+        arr    = np.array(segs, dtype=np.float64)
+        x0, y0, x1, y1 = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+        x_mid  = (x0 + x1) / 2
+        y_lo   = np.minimum(y0, y1)
+        y_hi   = np.maximum(y0, y1)
+        height = y_hi - y_lo
+        mask = (
+            (np.abs(x1 - x0) <= 0.5)    &   # nearly vertical
+            (x_mid > yaxis_x + 0.5)     &   # right of y-axis
+            (y_hi <= xaxis_y + 3)       &   # bottom near x-axis
+            (y_hi >= xaxis_y - 20)      &   # bottom not floating far above
+            (y_lo < xaxis_y - 0.5)      &   # top extends above baseline
+            (height >= 1.0)                  # noise floor
+        )
+        if xaxis_x_right is not None:
+            mask &= x_mid < xaxis_x_right - 1
+        x_mid  = x_mid[mask]
+        height = height[mask]
+        if len(x_mid) == 0:
+            return []
+        order     = np.argsort(x_mid)
+        x_mid     = x_mid[order]
+        height    = height[order]
+        gaps      = np.concatenate([[False], np.diff(x_mid) >= 0.5])
+        group_ids = np.cumsum(gaps)
+        return [
+            (float(x_mid[group_ids == g][0]), float(height[group_ids == g].max()))
+            for g in range(int(group_ids[-1]) + 1)
+        ]
+
+  WHAT IT DOES:
+    Filters all segments down to only the chart bars: vertical, positioned on
+    the x-axis baseline, right of the y-axis. Groups near-duplicate segments
+    (PDFs that draw the same bar twice) into single entries.
+
+  KEY LINE EXPLANATIONS:
+
+    arr = np.array(segs, dtype=np.float64)
+      → Converts the list of tuples to a 2D NumPy array. All filtering then
+        happens as vectorised operations — ~50x faster than a Python loop.
+
+    x0, y0, x1, y1 = arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+      → Unpacks each column into named 1D arrays for readable mask conditions.
+
+    y_lo = np.minimum(y0, y1)
+    y_hi = np.maximum(y0, y1)
+      → PDF segments can have y0 > y1 or y0 < y1 depending on draw direction.
+        np.minimum/maximum normalises so "height" is always positive.
+
+    mask = (
+        (np.abs(x1 - x0) <= 0.5)   : must be nearly vertical
+        (x_mid > yaxis_x + 0.5)    : must be right of the y-axis
+        (y_hi <= xaxis_y + 3)      : bottom at or just below the x-axis
+        (y_hi >= xaxis_y - 20)     : bottom not floating far above x-axis
+        (y_lo < xaxis_y - 0.5)     : top extends above baseline
+        (height >= 1.0)            : noise floor (rejects stray dots)
+    )
+      → One compound boolean mask applied to all segments simultaneously.
+        Each condition eliminates a different class of non-bar segments.
+
+    mask &= x_mid < xaxis_x_right - 1
+      → Exclude anything beyond the chart's right boundary (border lines,
+        decoration, etc.).
+
+    order = np.argsort(x_mid)
+      → Sort bars left-to-right by x position (needed for deduplication).
+
+    gaps = np.concatenate([[False], np.diff(x_mid) >= 0.5])
+      → np.diff gives consecutive x-position distances. Distance >= 0.5 PDF
+        units = different bar; less = duplicate of the same bar.
+
+    group_ids = np.cumsum(gaps)
+      → Converts "is this a new bar?" booleans into group IDs (0,0,1,1,2,...).
+
+    (float(x_mid[group_ids == g][0]), float(height[group_ids == g].max()))
+      → For each group: first x position and MAXIMUM height. Max height handles
+        near-duplicate segments that differ slightly in length.
+
+
+--------------------------------------------------------------------------------
+  SECTION 8 — process_pdf_vector()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def process_pdf_vector(pdf_path, write_visual=False, stem=None):
+        """Try to extract peaks directly from PDF vector layer."""
+        doc      = fitz.open(pdf_path)
+        page     = doc[0]
+        drawings = page.get_drawings()
+        if not drawings:
+            raise RuntimeError("no vector drawings on page")
+
+        segs = _collect_line_segments(drawings)
+        if len(segs) < 5:
+            raise RuntimeError(f"too few line segments ({len(segs)})")
+
+        page_w, page_h = page.rect.width, page.rect.height
+        xaxis_y, yaxis_x, xaxis_x_right = _find_baseline_and_yaxis(segs, page_w, page_h)
+        if xaxis_y is None:
+            raise RuntimeError("could not locate axes")
+
+        pixels_per_unit, x_intercept, pixels_per_pct = _calibrate(page, xaxis_y, yaxis_x)
+        if pixels_per_unit is None or pixels_per_pct is None:
+            raise RuntimeError("calibration failed (need >= 2 x-ticks and a '100' label)")
+
+        raw_bars = _extract_bars(segs, xaxis_y, yaxis_x, xaxis_x_right)
+        results  = []
+        for x_pdf, h_pdf in raw_bars:
+            mz        = round((x_pdf - x_intercept) / pixels_per_unit)
+            intensity = round(min(h_pdf / pixels_per_pct, 100.0), 2)
+            results.append({"mz": mz, "intensity": intensity})
+
+        max_mz = round((xaxis_x_right - x_intercept) / pixels_per_unit) \
+                 if xaxis_x_right is not None else None
+
+        if write_visual and stem:
+            pix = page.get_pixmap(dpi=RASTER_DPI)
+            vis = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+            out = cv2.cvtColor(vis, cv2.COLOR_RGBA2BGR if pix.n == 4 else cv2.COLOR_RGB2BGR)
+            vh, vw = out.shape[:2]
+            sx, sy = vw / page_w, vh / page_h
+            xr = int(xaxis_y * sy);  yc = int(yaxis_x * sx)
+            cv2.line(out, (0, xr), (vw-1, xr), (0, 0, 255), 2)       # red  = x-axis
+            cv2.line(out, (yc, 0), (yc, vh-1), (255, 0, 0), 2)       # blue = y-axis
+            cv2.circle(out, (yc, xr), 10, (0, 255, 0), -1)            # green = origin
+            # ... tick mark boxes (orange), bar-top dots (red) ...
+            VISUALS_FOLDER.mkdir(exist_ok=True)
+            cv2.imwrite(str(VISUALS_FOLDER / f"{stem}.png"), out)
+
+        doc.close()
+        return results, max_mz
+
+  WHAT IT DOES:
+    The fast (vector) pipeline. Opens the PDF, reads its raw vector drawing
+    layer, locates axes, calibrates, extracts bars, converts coordinates to
+    m/z and intensity, optionally draws a debug overlay, and returns peaks.
+
+  KEY LINE EXPLANATIONS:
+
+    doc = fitz.open(pdf_path)
+    page = doc[0]
+      → Opens the PDF and gets the first page. GCMS spectrum PDFs always
+        place the chart on page 1 (index 0).
+
+    drawings = page.get_drawings()
+    if not drawings: raise RuntimeError(...)
+      → get_drawings() returns the vector drawing layer. If empty, this is
+        a scanned PDF — fail fast so the caller falls back to raster.
+
+    if len(segs) < 5: raise RuntimeError(...)
+      → A legitimate spectrum needs at least: x-axis + y-axis + a few bars.
+        Fewer than 5 segments means extraction cannot succeed.
+
+    page_w, page_h = page.rect.width, page.rect.height
+      → Page dimensions in PDF points (1 point = 1/72 inch). Used as reference
+        so all thresholds are fractions of page size (resolution-independent).
+
+    if pixels_per_unit is None or pixels_per_pct is None: raise ...
+      → Without both calibrations we cannot produce correct values. Fail
+        loudly rather than silently produce wrong numbers.
+
+    mz = round((x_pdf - x_intercept) / pixels_per_unit)
+      → Inverse of the linear calibration: (position - intercept) / slope.
+        round() gives the nearest integer m/z (mass spectrometers report
+        nominal integer masses).
+
+    intensity = round(min(h_pdf / pixels_per_pct, 100.0), 2)
+      → Bar height / calibration scale = percentage intensity.
+        min(..., 100.0) clamps floating-point rounding errors that might
+        push the base peak slightly above 100%.
+
+    pix = page.get_pixmap(dpi=RASTER_DPI)
+    vis = np.frombuffer(pix.samples, dtype=np.uint8).reshape(...)
+      → Only when write_visual=True. Rasterises the page for drawing on.
+        np.frombuffer is zero-copy: creates a NumPy view of raw pixel bytes
+        without allocating a new array.
+
+    sx, sy = vw / page_w, vh / page_h
+      → Scale factors from PDF coordinate units to pixel coordinates. Used
+        to project all axis positions onto the raster image.
+
+    cv2.line / cv2.circle
+      → Draws red (x-axis), blue (y-axis), green (origin), orange (ticks),
+        and red-dot (bar tops) markers on the overlay image for visual
+        confirmation that axis detection worked correctly.
+
+    doc.close()
+      → Releases the file handle. PyMuPDF holds a file lock; not closing it
+        leaks the handle and on Windows prevents moving or deleting the file.
+
+
+--------------------------------------------------------------------------------
+  SECTION 9 — process_pdf_raster()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def process_pdf_raster(pdf_path, write_visual=False, stem=None):
+        """Original pipeline with DPI lowered and visualization off by default."""
+        pdf_path = Path(pdf_path)
+        doc  = fitz.open(pdf_path)
+        page = doc[0]
+        pix  = page.get_pixmap(dpi=RASTER_DPI)
+        img  = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+
+        if pix.n == 4:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+        elif pix.n == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img.squeeze()
+        h, w = gray.shape[:2]
+
+        binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        inv    = 255 - binary
+
+        row_sums   = inv.sum(axis=1)
+        row_region = row_sums[h // 50 : h - h // 50]
+        candidates = np.where(row_region >= row_region.max() * 0.7)[0]
+        xaxis_row  = int(candidates[-1]) + h // 50
+
+        col_sums  = inv.sum(axis=0)
+        yaxis_col = int(np.argmax(col_sums[w // 50 : w // 2])) + w // 50
+
+        scale_x = w / page.rect.width
+        scale_y = h / page.rect.height
+        words   = page.get_text("words")
+
+        # ... (tick detection, calibration identical to vector pipeline) ...
+
+        binary_clean = binary.copy()
+        for x0, y0, x1, y1, text, *_ in words:
+            pad = 4
+            binary_clean[max(0, int(y0*scale_y)-pad) : min(h, int(y1*scale_y)+pad),
+                         max(0, int(x0*scale_x)-pad) : min(w, int(x1*scale_x)+pad)] = 255
+
+        bars      = []
+        start_col = int(mid_a) if mid_a is not None else yaxis_col
+        scan_row  = xaxis_row - 3
+        in_bar    = False
+        bar_start = bar_height = 0
+        for col in range(start_col, w):
+            if binary_clean[scan_row, col] == 0:        # dark pixel = ink = bar
+                top = scan_row
+                while top > 0 and binary_clean[top - 1, col] == 0:
+                    top -= 1
+                height = xaxis_row - top
+                if not in_bar:
+                    in_bar, bar_start, bar_height = True, col, height
+                else:
+                    bar_height = max(bar_height, height)
+            else:
+                if in_bar:
+                    bars.append((bar_start, col - 1, bar_height))
+                    in_bar = False
+        if in_bar:
+            bars.append((bar_start, w - 1, bar_height))
+
+        doc.close()
+        return results
+
+  WHAT IT DOES:
+    The fallback (raster) pipeline. Rasterises the page to pixels, uses image
+    processing to find axes, calibrate, and scan column-by-column for bars.
+    Used when the vector pipeline fails (e.g. scanned PDFs).
+
+  KEY LINE EXPLANATIONS:
+
+    pix = page.get_pixmap(dpi=RASTER_DPI)
+    img = np.frombuffer(pix.samples, ...).reshape(...)
+      → Rasterises at 150 DPI. This is the PRIMARY data source in the raster
+        pipeline (not just for visuals). Zero-copy buffer wrapping.
+
+    if pix.n == 4: gray = cv2.cvtColor(img, cv2.COLOR_RGBA2GRAY)
+    elif pix.n == 3: gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    else: gray = img.squeeze()
+      → Direct conversion to grayscale in ONE call. Handles RGBA (4 channels),
+        RGB (3), and grayscale (1). Skips an intermediate BGR step — saves
+        one full-image allocation.
+
+    binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+      → Otsu's method automatically finds the best threshold to separate dark
+        ink from light background by minimising intra-class pixel variance.
+        The [1] discards the computed threshold value; keeps only the binary image.
+
+    inv = 255 - binary
+      → Inverts the binary image so ink pixels = 255 (high value) and
+        background = 0. Makes row/column summation intuitive: more ink = higher sum.
+
+    row_sums = inv.sum(axis=1)
+    candidates = np.where(row_region >= row_region.max() * 0.7)[0]
+    xaxis_row  = int(candidates[-1]) + h // 50
+      → Sums each row across all columns. The x-axis is the densest horizontal
+        structure. candidates[-1] takes the lowest qualifying row (bottom of axis).
+
+    col_sums  = inv.sum(axis=0)
+    yaxis_col = int(np.argmax(col_sums[w // 50 : w // 2])) + w // 50
+      → Sums each column in the left half. The y-axis is the tallest vertical
+        ink structure. Restricted to left half so chart bars are not confused
+        with the y-axis.
+
+    binary_clean = binary.copy()
+    binary_clean[...] = 255   (text bounding boxes whitened)
+      → Erases all text pixels before bar scanning. Text characters would
+        otherwise be detected as spurious bars. 4-pixel padding ensures no
+        ink bleeds into adjacent area.
+
+    scan_row = xaxis_row - 3
+      → Scans 3 pixels above the x-axis, placing the scanner in the bar
+        region — not on the axis line itself.
+
+    for col in range(start_col, w):
+        if binary_clean[scan_row, col] == 0:    # ink = entering/in a bar
+            top = scan_row
+            while top > 0 and binary_clean[top-1, col] == 0:
+                top -= 1
+            height = xaxis_row - top
+      → Column-by-column finite-state machine:
+          0 (dark)   = ink present = we are in or entering a bar
+          255 (light) = no ink = bar just ended
+        For each dark column, climbs upward to find the bar's top pixel.
+        height = distance from bar top to x-axis baseline.
+
+    if not in_bar: in_bar, bar_start, bar_height = True, col, height
+    else: bar_height = max(bar_height, height)
+      → Tracks current bar's start column and maximum height across its width.
+
+    if in_bar: bars.append((bar_start, col-1, bar_height)); in_bar = False
+      → When a light pixel follows a bar, records (start_col, end_col, height).
+
+
+--------------------------------------------------------------------------------
+  SECTION 10 — _validate_result()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _validate_result(results):
+        """Automated sanity checks on extracted peaks. Returns list of warning strings."""
+        warnings = []
+        if not results:
+            warnings.append("no bars detected")
+            return warnings
+
+        intensities = [r["intensity"] for r in results]
+        mz_values   = [r["mz"]        for r in results]
+
+        if max(intensities) < 99.0:
+            warnings.append(f"base peak is {max(intensities):.2f}% — expected 100.0 (y-calibration drift)")
+
+        bad_mz = [mz for mz in mz_values if mz < 2 or mz > 2000]
+        if bad_mz:
+            warnings.append(f"out-of-range m/z: {bad_mz}")
+
+        if any(i <= 0 or i > 100.1 for i in intensities):
+            warnings.append("intensity values outside (0, 100] range")
+
+        if len(results) < 3:
+            warnings.append(f"only {len(results)} bar(s) detected — suspiciously few")
+
+        seen = {}
+        for mz in mz_values:
+            seen[mz] = seen.get(mz, 0) + 1
+        dupes = [mz for mz, n in seen.items() if n > 1]
+        if dupes:
+            warnings.append(f"duplicate m/z values: {dupes}")
+
+        return warnings
+
+  WHAT IT DOES:
+    Applies five physics-based sanity checks to the extracted peak list.
+    Returns a list of warning strings (empty = no issues).
+
+  KEY LINE EXPLANATIONS:
+
+    if not results: warnings.append(...); return warnings
+      → Early exit. If results is empty, calling max([]) would raise
+        ValueError. Return immediately with just the "no bars" warning.
+
+    if max(intensities) < 99.0:
+      → Base peak must be 100% by definition in a normalised mass spectrum.
+        99.0 threshold allows for 2-decimal rounding (e.g., 99.97% is valid).
+        If below 99%, the y-axis calibration drifted.
+
+    bad_mz = [mz for mz in mz_values if mz < 2 or mz > 2000]
+      → m/z < 2 is below H2+ (the lightest real ion). m/z > 2000 exceeds the
+        scan range of standard unit-resolution GC-MS instruments. Out-of-range
+        values indicate x-axis calibration failure.
+
+    if any(i <= 0 or i > 100.1 for i in intensities):
+      → Zero or negative: bar below the baseline (impossible). > 100.1: the
+        clamping in process_pdf_vector() failed.
+
+    if len(results) < 3:
+      → Real mass spectra of organic compounds always produce many fragment ions.
+        1-2 bars = near-total detection failure.
+
+    seen = {}; for mz: seen[mz] = seen.get(mz, 0) + 1; dupes = [...]
+      → Counts occurrences of each m/z. Duplicates are physically impossible
+        in a unit-resolution instrument: one bar per mass unit.
+
+
+--------------------------------------------------------------------------------
+  SECTION 11 — _compare_pipelines()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _compare_pipelines(v_results, r_results):
+        """Cross-compare vector and raster results. Returns list of warning strings."""
+        warnings = []
+        v_count, r_count = len(v_results), len(r_results)
+
+        if r_count == 0:
+            warnings.append("cross-validate: raster pipeline found no bars")
+            return warnings
+
+        diff_pct = abs(v_count - r_count) / max(v_count, r_count)
+        if diff_pct > 0.2:
+            warnings.append(
+                f"cross-validate: bar count mismatch — vector={v_count}, "
+                f"raster={r_count} ({diff_pct*100:.0f}% diff)"
+            )
+
+        v_mz = {r["mz"] for r in v_results}
+        r_mz = {r["mz"] for r in r_results}
+        only_vector = sorted(mz for mz in v_mz if not any(abs(mz - rm) <= 1 for rm in r_mz))
+        only_raster = sorted(mz for mz in r_mz if not any(abs(mz - vm) <= 1 for vm in v_mz))
+
+        if len(only_vector) > max(1, len(v_mz) * 0.1):
+            warnings.append(f"cross-validate: {len(only_vector)} m/z only in vector: {only_vector[:10]}")
+        if len(only_raster) > max(1, len(r_mz) * 0.1):
+            warnings.append(f"cross-validate: {len(only_raster)} m/z only in raster: {only_raster[:10]}")
+
+        return warnings
+
+  WHAT IT DOES:
+    When --cross-validate is used, compares the vector pipeline's results
+    against a second run of the raster pipeline. Flags significant discrepancies
+    in bar count or m/z values.
+
+  KEY LINE EXPLANATIONS:
+
+    diff_pct = abs(v_count - r_count) / max(v_count, r_count)
+      → Relative bar count difference. > 20% is flagged. A small difference
+        is normal due to raster pixel quantisation.
+
+    only_vector = sorted(mz for mz in v_mz if not any(abs(mz - rm) <= 1 for rm in r_mz))
+      → m/z found by vector but not raster, with ±1 tolerance.
+        ±1 is needed because raster pixel positions are quantised to integer
+        columns, so m/z values can be off by ±1 even when correct.
+
+    if len(only_vector) > max(1, len(v_mz) * 0.1):
+      → Only flag if > 10% of m/z values are exclusive to one pipeline.
+        A single discrepancy is expected; many discrepancies indicates a problem.
+
+
+--------------------------------------------------------------------------------
+  SECTION 12 — process_pdf()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def process_pdf(pdf_path, cross_validate=False, write_visual=WRITE_VISUALS):
+        """Try vector path first, fall back to raster. Designed for Pool workers."""
+        pdf_path = Path(pdf_path)
+        stem     = pdf_path.stem
+        t0       = time.time()
+        method   = "vector"
+        try:
+            try:
+                results, max_mz = process_pdf_vector(pdf_path, write_visual=write_visual, stem=stem)
+            except Exception:
+                method  = "raster"
+                max_mz  = None
+                results = process_pdf_raster(pdf_path, write_visual=write_visual, stem=stem)
+
+            warnings = _validate_result(results)
+
+            if cross_validate and method == "vector":
+                try:
+                    raster_results = process_pdf_raster(pdf_path)
+                    warnings.extend(_compare_pipelines(results, raster_results))
+                except Exception as e:
+                    warnings.append(f"cross-validate: raster pipeline failed: {e}")
+
+            with open(JSON_FOLDER / f"{stem}.json", "w") as f:
+                json.dump({"peaks": results, "warnings": warnings, "method": method}, f, indent=2)
+            return {"file": pdf_path.name, "ok": True, "bars": len(results),
+                    "warnings": len(warnings), "method": method, "time": time.time() - t0}
+
+        except Exception as e:
+            with open(JSON_FOLDER / f"{stem}.json", "w") as f:
+                json.dump({"peaks": [], "warnings": [str(e)], "method": method, "ok": False}, f, indent=2)
+            return {"file": pdf_path.name, "ok": False, "error": str(e),
+                    "method": method, "time": time.time() - t0}
+
+  WHAT IT DOES:
+    The unified entry point called by ThreadPoolExecutor for each PDF. Tries
+    vector first, falls back to raster on any exception, validates the result,
+    writes the JSON output, and returns a summary dict for progress reporting.
+
+  KEY LINE EXPLANATIONS:
+
+    method = "vector"
+      → Default assumption. Changed to "raster" if vector raises.
+        Written to the JSON so users know which pipeline was used.
+
+    try:
+        try: results = process_pdf_vector(...)
+        except Exception: method = "raster"; results = process_pdf_raster(...)
+      → Two-level exception handling:
+          Inner try: attempts vector; any exception triggers raster fallback.
+          Outer try: catches failures from BOTH pipelines (e.g. corrupted PDF).
+
+    json.dump({...}, f, indent=2)
+      → 2-space indentation makes the file human-readable. Without it, the
+        entire JSON would be one unreadable line.
+
+    return {"file": ..., "ok": True, "bars": ..., "warnings": ..., ...}
+      → The return dict is what as_completed() yields to main(). Contains
+        summary stats for progress reporting, not the full peak data.
+
+    except Exception as e: json.dump({..."ok": False...})
+      → Even on catastrophic failure, writes a valid JSON file with ok=False
+        and the error message so validate.py can report it.
+
+
+--------------------------------------------------------------------------------
+  SECTION 13 — main()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def main():
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--input",          default="samples",   help="PDF file or folder")
+        parser.add_argument("--workers",        type=int, default=0, help="0 = auto")
+        parser.add_argument("--cross-validate", action="store_true", help="run both pipelines")
+        parser.add_argument("--visual",         action="store_true", help="save debug overlay PNGs")
+        args = parser.parse_args()
+
+        JSON_FOLDER.mkdir(exist_ok=True)
+        VISUALS_FOLDER.mkdir(exist_ok=True)
+
+        input_path = Path(args.input)
+        if input_path.is_file() and input_path.suffix.lower() == ".pdf":
+            pdf_files    = [input_path]
+            write_visual = True       # single-file run always produces a visual
+        else:
+            pdf_files    = sorted(input_path.glob("*.pdf"))
+            if not pdf_files:
+                raise FileNotFoundError(f"No PDFs in {args.input}/")
+            write_visual = args.visual
+
+        workers = args.workers or min(len(pdf_files), os.cpu_count())
+        print(f"Processing {len(pdf_files)} PDF(s) with {workers} workers"
+              + (" [visuals on]" if write_visual else ""))
+
+        t0 = time.time()
+        n_vector = n_raster = n_warn = n_fail = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(process_pdf, p, args.cross_validate, write_visual)
+                       for p in pdf_files]
+            for fut in as_completed(futures):
+                r = fut.result()
+                if r["ok"]:
+                    if r["method"] == "vector": n_vector += 1
+                    else:                       n_raster += 1
+                    if r.get("warnings", 0) > 0: n_warn += 1
+                else:
+                    n_fail += 1
+                    print(f"  FAIL {r['file']}: {r['error']}")
+        elapsed = time.time() - t0
+
+        print(f"\nDone in {elapsed:.2f}s")
+        print(f"  vector: {n_vector}    raster: {n_raster}    warned: {n_warn}    failed: {n_fail}")
+        print(f"  throughput: {len(pdf_files) / elapsed:.1f} PDFs/s")
+        if n_warn or n_fail:
+            print(f"  run validate.py to review flagged files")
+
+  KEY LINE EXPLANATIONS:
+
+    JSON_FOLDER.mkdir(exist_ok=True)
+      → Creates output directories BEFORE the thread pool starts.
+        exist_ok=True prevents a race condition: without it, two threads
+        could both check "does the folder exist?" simultaneously and both
+        try to create it — the second would raise FileExistsError.
+
+    if input_path.is_file() and input_path.suffix.lower() == ".pdf":
+        write_visual = True
+      → Single-file mode (debugging workflow) always produces a visual overlay.
+        Batch mode only writes visuals if --visual is passed.
+
+    workers = args.workers or min(len(pdf_files), os.cpu_count())
+      → Auto-size: no point creating more threads than files or CPUs.
+        Per benchmark results, 4 workers is optimal for vector PDFs.
+
+    futures = [ex.submit(process_pdf, p, ...) for p in pdf_files]
+      → Submits ALL jobs at once. The pool queues them and runs up to
+        max_workers concurrently. Submitting all at once keeps threads busy.
+
+    for fut in as_completed(futures):
+      → Yields each future the instant it finishes (not in submission order).
+        Enables real-time progress reporting and means fast files don't wait
+        for slow ones before being processed.
+
+    if r.get("warnings", 0) > 0:
+      → .get(..., 0) safely handles the failure path where "warnings" is a
+        list of strings (error JSON) rather than an integer count.
+
+
+--------------------------------------------------------------------------------
+  SECTION 14 — EFFICIENCY TECHNIQUES
+--------------------------------------------------------------------------------
+
+  1. TWO-TIER PIPELINE (Vector-first, Raster-fallback)
+     The vector pipeline reads the PDF's drawing commands — no image decoding,
+     no pixel iteration. 10-50x faster than the raster approach.
+     Raster is only used when the PDF has no vector layer.
+
+  2. NUMPY VECTORISED FILTERING (_extract_bars)
+     All segment filtering uses NumPy boolean masks on the entire array at once.
+
+     Python loop:   [seg for seg in segs if abs(seg[2]-seg[0]) <= 0.5 and ...]
+     NumPy mask:    mask = (np.abs(x1-x0) <= 0.5) & (...); arr[mask]
+
+     For 10,000 drawing segments: ~0.1ms (NumPy) vs ~5ms (Python loop) = 50x faster.
+
+  3. ZERO-COPY PIXEL BUFFER (np.frombuffer)
+     np.frombuffer(pix.samples, ...) creates a NumPy view of the raw pixel bytes
+     without copying. For 150 DPI A4 = ~3.5 MB saved per file per pipeline call.
+
+  4. DIRECT GRAYSCALE CONVERSION
+     RGB -> GRAY in one cv2.cvtColor call instead of RGB -> BGR -> GRAY (two calls).
+     Saves one full-image allocation in the raster pipeline.
+
+  5. TEXT ERASURE BEFORE PIXEL SCAN
+     Text pixels are whited out before bar scanning. Cheaper than detecting a
+     "bar" and then checking if it overlaps a text bounding box per-bar.
+
+  6. THREAD-BASED PARALLELISM (ThreadPoolExecutor)
+     Files processed in parallel. GIL released by PyMuPDF, OpenCV, NumPy
+     during C-level work — threads get genuine concurrency for the heavy work.
+
+  7. as_completed FOR REAL-TIME REPORTING
+     Results collected as each file finishes. Fast files' JSON is written while
+     other files are still being processed.
+
+  8. FAIL-FAST VALIDATION BEFORE HEAVY WORK
+     process_pdf_vector() checks for "no drawings", "too few segments", and
+     "calibration failed" early and raises immediately, avoiding expensive
+     rasterisation on PDFs that cannot succeed.
+
+  9. OTSU THRESHOLDING INSTEAD OF FIXED THRESHOLD
+     Computes optimal ink/background threshold from the pixel histogram in one
+     pass. Handles PDFs rendered at different brightnesses without brittle
+     hardcoded values.
+
+  10. LINEAR REGRESSION FOR CALIBRATION (np.polyfit)
+      Using all available tick labels in a least-squares fit (not just 2 anchor
+      points) gives more accurate calibration and is robust to one misread tick.
+
+  11. EARLY EXIT IN VALIDATION (_validate_result)
+      Empty results returns immediately, skipping checks that would crash on
+      empty sequences (e.g., max([]) raises ValueError).
+
+  12. EXIST_OK ON MKDIR
+      Path.mkdir(exist_ok=True) prevents a race condition in multi-threaded
+      code where two threads try to create the same folder simultaneously.
+
+
+================================================================================
+  FILE 2 — validate.py
+  Automated Quality Checker for JSON Outputs
+================================================================================
+
+--------------------------------------------------------------------------------
+  SECTION 1 — MODULE DOCSTRING
+--------------------------------------------------------------------------------
+
+  CODE:
+    """
+    validate.py — Automated quality checks on the JSON outputs from final.py.
+
+    Reads every .json in outputs/ and runs seven layers of checks:
+      1. Schema         — required keys present, correct types
+      2. Physics        — base peak = 100%, m/z in range, intensities valid
+      3. Completeness   — not empty, enough peaks detected
+      4. Consistency    — no duplicate m/z, m/z values are sorted
+      5. Warnings       — any warning flags raised by the extractor
+      6. Statistics     — outlier detection across the whole batch
+      7. Spot-check     — random sample list for manual visual verification
+
+    Writes a full report to validation_report.txt and prints a summary.
+
+    Usage
+    -----
+      python validate.py
+      python validate.py --outputs outputs/ --report validation_report.txt
+    """
+
+  WHAT IT DOES:
+    Documents the seven-layer checking strategy and usage examples. Also
+    serves as built-in documentation accessible via help(validate).
+
+
+--------------------------------------------------------------------------------
+  SECTION 2 — IMPORTS
+--------------------------------------------------------------------------------
+
+  CODE:
+    import json
+    import random
+    import os
+    import sys
+    from pathlib import Path
+    from collections import defaultdict
+
+  import json
+    WHY: Every output file from final.py is a .json file. json.load() parses
+         them into Python dicts for inspection.
+
+  import random
+    WHY: Used to pick a reproducible random spot-check sample.
+         random.seed(42) ensures the same files are selected every run, so
+         the reviewer knows exactly which files were flagged.
+
+  import sys
+    WHY: sys.exit() aborts with a clear error message if no JSON files are
+         found, avoiding a confusing empty report.
+
+  from pathlib import Path
+    WHY: Clean cross-platform path manipulation — same reason as final.py.
+
+  from collections import defaultdict
+    WHY: A dict subclass that auto-initialises missing keys to a default value.
+         Used for method_count, type_counts, and outliers — avoids the pattern
+         "if key not in dict: dict[key] = 0; dict[key] += 1" everywhere.
+
+
+--------------------------------------------------------------------------------
+  SECTION 3 — CONFIG CONSTANTS
+--------------------------------------------------------------------------------
+
+  CODE:
+    OUTPUTS_DIR   = Path("outputs")
+    REPORT_FILE   = Path("validation_report.txt")
+    VISUALS_DIR   = Path("visuals")
+    SPOT_N        = 15
+    BASE_PEAK_TOL = 0.5
+    MZ_MIN        = 2
+    MZ_MAX        = 2000
+    MIN_PEAKS     = 3
+    OUTLIER_SIGMA = 2.0
+
+  SPOT_N = 15
+    WHY: 15 files is enough to catch systematic errors without overwhelming
+         the reviewer. All warned/failed files are always included regardless.
+
+  BASE_PEAK_TOL = 0.5
+    WHY: The base peak must be >= 99.5%. This tolerance allows for 2-decimal
+         rounding in process_pdf_vector() (e.g., 99.97% is valid).
+
+  MZ_MIN = 2 / MZ_MAX = 2000
+    WHY: Physical limits of a standard GC-MS instrument.
+         m/z < 2 is lighter than H2+ (physically impossible to produce).
+         m/z > 2000 exceeds the scan range of unit-resolution hardware.
+
+  MIN_PEAKS = 3
+    WHY: Real mass spectra of organic compounds always produce many fragment
+         ions. Fewer than 3 peaks indicates near-total detection failure.
+
+  OUTLIER_SIGMA = 2.0
+    WHY: Files more than 2 standard deviations from the batch mean are flagged.
+         At 2-sigma, about 5% of files would be flagged in a normal distribution
+         — enough to catch genuinely anomalous files without too many false positives.
+
+
+--------------------------------------------------------------------------------
+  SECTION 4 — _Tee class
+--------------------------------------------------------------------------------
+
+  CODE:
+    class _Tee:
+        def __init__(self, path):
+            self._f = open(path, "w", encoding="utf-8")
+
+        def __call__(self, *lines):
+            for line in lines:
+                print(line.encode("ascii", errors="replace").decode("ascii"))
+                self._f.write(line + "\n")
+
+        def close(self):
+            self._f.close()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+  WHAT IT DOES:
+    A callable object that writes every line to BOTH the console (stdout) AND
+    a UTF-8 report file simultaneously. Works as a context manager so the file
+    is always closed cleanly even if validation crashes mid-run.
+
+  KEY LINE EXPLANATIONS:
+
+    def __init__(self, path):
+        self._f = open(path, "w", encoding="utf-8")
+      → Opens the report file in UTF-8. Stays open for the entire validation
+        run — one open/close per report, not one per line.
+
+    def __call__(self, *lines):
+      → Makes the object callable: out("line1", "line2") writes both.
+        *lines allows passing multiple strings in one call, making the report
+        generation code cleaner.
+
+    print(line.encode("ascii", errors="replace").decode("ascii"))
+      → Converts non-ASCII characters to '?' before printing.
+        WHY: Windows PowerShell uses cp1252 encoding which cannot display
+        many Unicode characters (sigma, arrows, etc.). This prevents
+        UnicodeEncodeError on the console while keeping the file in UTF-8.
+
+    self._f.write(line + "\n")
+      → Writes the original UTF-8 line to the file unchanged. The report
+        file will have the correct characters even if the console replaced them.
+
+    def __enter__ / def __exit__:
+      → Context manager protocol. __exit__ calls close() regardless of whether
+        an exception occurred, ensuring the file is always flushed and closed.
+        Prevents partial report files if validation crashes.
+
+  WHY IT WAS USED:
+    Without _Tee, every output line would need both print() and f.write().
+    _Tee centralises this into one callable, eliminating duplication and
+    ensuring console/file output never gets out of sync.
+
+  ALTERNATIVES:
+    - logging module: More powerful but heavier; overkill for a single report.
+    - contextlib.redirect_stdout: Redirects one stream, not both simultaneously.
+    - shell tee command: External, not portable to Windows.
+
+
+--------------------------------------------------------------------------------
+  SECTION 5 — _mean() and _std()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _mean(values):
+        return sum(values) / len(values) if values else 0.0
+
+    def _std(values):
+        if len(values) < 2:
+            return 0.0
+        m = _mean(values)
+        return (sum((v - m) ** 2 for v in values) / (len(values) - 1)) ** 0.5
+
+  WHAT IT DOES:
+    Arithmetic mean and sample standard deviation. Used by _find_outliers()
+    to compute z-scores across the batch.
+
+  KEY LINE EXPLANATIONS:
+
+    return sum(values) / len(values) if values else 0.0
+      → Guards against division by zero on an empty list.
+
+    / (len(values) - 1)
+      → Bessel's correction: dividing by N-1 instead of N gives the unbiased
+        sample standard deviation (better estimate of population std when the
+        sample is small). This matches scipy's ddof=1 convention.
+
+  WHY CUSTOM INSTEAD OF numpy/statistics:
+    Avoids importing NumPy or statistics just for two simple calculations
+    on a list of ~251 numbers. No performance concern at this scale.
+
+
+--------------------------------------------------------------------------------
+  SECTION 6 — _load_json()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _load_json(path):
+        """Load a JSON file. Returns (data, error_string)."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f), None
+        except Exception as e:
+            return None, str(e)
+
+  WHAT IT DOES:
+    Loads a JSON file and returns (data, None) on success or (None, error_str)
+    on failure. Never raises — the caller handles the error.
+
+  WHY THE (data, error) TUPLE:
+    Separates "load succeeded" from "load failed" without exceptions crossing
+    function boundaries. The caller checks: if err: ... without needing
+    a try/except at every call site. Makes validate()'s main loop cleaner.
+
+  ALTERNATIVES:
+    - Return None on failure: Loses the error message.
+    - Always raise: Forces every caller to have its own try/except.
+
+
+--------------------------------------------------------------------------------
+  SECTION 7 — _check_file()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _check_file(name, data):
+        """Run all per-file checks. Returns a list of issue strings (empty = clean)."""
+        issues = []
+
+        # CHECK 1: Schema — required keys present
+        for key in ("peaks", "warnings", "method"):
+            if key not in data:
+                issues.append(f"SCHEMA  missing required key '{key}'")
+        if "peaks" in data and not isinstance(data["peaks"], list):
+            issues.append("SCHEMA  'peaks' is not a list")
+            return issues
+
+        # CHECK 2: Failed extraction
+        if data.get("ok") is False:
+            err = data.get("warnings", ["unknown error"])
+            issues.append(f"FAILED  extraction failed: {err[0] if err else '?'}")
+            return issues
+
+        peaks = data.get("peaks", [])
+
+        # CHECK 3: Peak entry types
+        for i, p in enumerate(peaks):
+            if not isinstance(p, dict):
+                issues.append(f"SCHEMA  peak[{i}] is not a dict")
+                continue
+            if "mz" not in p:
+                issues.append(f"SCHEMA  peak[{i}] missing 'mz'")
+            if "intensity" not in p:
+                issues.append(f"SCHEMA  peak[{i}] missing 'intensity'")
+
+        # CHECK 4: Completeness
+        if len(peaks) == 0:
+            issues.append("EMPTY   no peaks extracted")
+            return issues
+        if len(peaks) < MIN_PEAKS:
+            issues.append(f"SPARSE  only {len(peaks)} peak(s) — suspiciously few "
+                          f"(minimum expected: {MIN_PEAKS})")
+
+        # CHECK 5: Physics — base peak must be 100%
+        intensities = [p["intensity"] for p in peaks if "intensity" in p]
+        mz_values   = [p["mz"]        for p in peaks if "mz"        in p]
+        if intensities:
+            base = max(intensities)
+            if base < 100.0 - BASE_PEAK_TOL:
+                issues.append(f"PHYSICS base peak is {base:.2f}% — should be 100.0% "
+                              f"(y-axis calibration drift)")
+            if base > 100.1:
+                issues.append(f"PHYSICS base peak is {base:.2f}% — exceeds 100% "
+                              f"(clamping failed)")
+
+        # CHECK 6: Physics — intensity range
+        bad_intensity = [i for i in intensities if i <= 0 or i > 100.1]
+        if bad_intensity:
+            issues.append(f"PHYSICS {len(bad_intensity)} intensity value(s) outside "
+                          f"(0, 100]: {bad_intensity[:5]}")
+
+        # CHECK 7: Physics — m/z range
+        if mz_values:
+            bad_mz = [m for m in mz_values if m < MZ_MIN or m > MZ_MAX]
+            if bad_mz:
+                issues.append(f"PHYSICS {len(bad_mz)} m/z value(s) outside "
+                              f"[{MZ_MIN}, {MZ_MAX}]: {bad_mz[:5]}")
+            if min(mz_values) < 0:
+                issues.append(f"PHYSICS negative m/z detected: {min(mz_values)}")
+
+        # CHECK 8: Consistency — no duplicate m/z
+        seen = {}
+        for m in mz_values:
+            seen[m] = seen.get(m, 0) + 1
+        dupes = [m for m, n in seen.items() if n > 1]
+        if dupes:
+            issues.append(f"DUPE    duplicate m/z values: {sorted(dupes)[:10]}")
+
+        # CHECK 9: Consistency — m/z sorted ascending
+        if mz_values != sorted(mz_values):
+            issues.append("ORDER   m/z values are not sorted ascending "
+                          "(may indicate extraction ordering bug)")
+
+        # CHECK 10: Extractor warnings forwarded
+        w = data.get("warnings", [])
+        if isinstance(w, list) and w:
+            for msg in w:
+                issues.append(f"WARN    {msg}")
+
+        return issues
+
+  WHAT IT DOES:
+    Runs 10 checks on a single parsed JSON file. Returns a list of issue
+    strings (empty = clean). Each check tests a specific property of the data.
+
+  CHECK-BY-CHECK EXPLANATIONS:
+
+    CHECK 1 — Schema
+      for key in ("peaks", "warnings", "method"): if key not in data:
+        → The three required keys must be present. Missing keys indicate
+          a truncated write (e.g., process killed mid-write) or a bug.
+      if not isinstance(data["peaks"], list): return issues
+        → Early return: if "peaks" is not a list, all subsequent checks
+          that iterate over it would crash. Return what we have so far.
+
+    CHECK 2 — Failed extraction
+      if data.get("ok") is False:
+        → final.py writes ok=False when both pipelines fail. A failed file
+          has empty peaks[] and an error in warnings. Flag and skip content checks.
+
+    CHECK 3 — Peak entry types
+      for i, p in enumerate(peaks):
+          if not isinstance(p, dict): ...
+          if "mz" not in p or "intensity" not in p: ...
+        → Each peak must be a dict with both keys. enumerate() gives the
+          index for informative error messages.
+
+    CHECK 4 — Completeness
+      if len(peaks) == 0: return issues
+        → Early return: no peaks = nothing to run physics checks on.
+      if len(peaks) < MIN_PEAKS:
+        → Real spectra always have many peaks. 1-2 = detection failure.
+
+    CHECK 5 — Physics: base peak = 100%
+      base < 100.0 - BASE_PEAK_TOL  (i.e., < 99.5%)
+        → In a normalised mass spectrum this is true BY DEFINITION.
+          The lab instrument always normalises the tallest bar to 100%.
+          If the JSON shows 73%, every peak intensity in that file is wrong.
+      base > 100.1
+        → The clamping (min(..., 100.0)) in process_pdf_vector() should
+          prevent this. If it happens, there is a bug in the clamping logic.
+
+    CHECK 6 — Physics: intensity range
+      i <= 0 or i > 100.1
+        → Zero/negative: bar below the baseline (impossible).
+          > 100.1: clamping failed.
+
+    CHECK 7 — Physics: m/z range
+      m < MZ_MIN or m > MZ_MAX
+        → Out-of-range m/z = x-axis calibration wrong. All values in that
+          file are incorrect.
+      min(mz_values) < 0
+        → Negative m/z: catastrophic calibration failure (x-intercept wrong).
+
+    CHECK 8 — Consistency: no duplicate m/z
+      seen[m] = seen.get(m, 0) + 1; dupes = [m for m, n in ... if n > 1]
+        → Physically impossible in a unit-resolution instrument. Duplicates
+          mean two bars rounded to the same integer m/z — calibration off
+          by < 0.5 m/z units.
+
+    CHECK 9 — Consistency: m/z sorted
+      if mz_values != sorted(mz_values):
+        → final.py processes bars left-to-right (lowest m/z first), so the
+          output should always be sorted. An unsorted list indicates an
+          ordering bug.
+
+    CHECK 10 — Extractor warnings
+      for msg in data.get("warnings", []): issues.append(f"WARN    {msg}")
+        → Relays any warnings already emitted by _validate_result() in
+          final.py (stored in the JSON) into the consolidated report.
+
+
+--------------------------------------------------------------------------------
+  SECTION 8 — _find_outliers()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _find_outliers(stats_by_file):
+        """Compare each file's peak count and max m/z against the batch mean.
+        Returns dict: filename -> list of outlier descriptions."""
+        outliers = defaultdict(list)
+        counts  = {f: s["n_peaks"] for f, s in stats_by_file.items() if s["n_peaks"] is not None}
+        max_mzs = {f: s["max_mz"]  for f, s in stats_by_file.items() if s["max_mz"]  is not None}
+
+        for label, values_dict in [("peak count", counts), ("max m/z", max_mzs)]:
+            vals = list(values_dict.values())
+            if len(vals) < 3:
+                continue
+            mu  = _mean(vals)
+            sig = _std(vals)
+            if sig == 0:
+                continue
+            for fname, v in values_dict.items():
+                z = abs(v - mu) / sig
+                if z > OUTLIER_SIGMA:
+                    direction = "high" if v > mu else "low"
+                    outliers[fname].append(
+                        f"OUTLIER {label} = {v}  "
+                        f"(mean={mu:.1f}, sd={sig:.1f}, z={z:.1f}, {direction})"
+                    )
+        return outliers
+
+  WHAT IT DOES:
+    Compares each file's peak count and max m/z against the batch-wide mean
+    and standard deviation. Files more than OUTLIER_SIGMA (2.0) standard
+    deviations from the mean are returned as outliers.
+
+  KEY LINE EXPLANATIONS:
+
+    counts  = {f: s["n_peaks"] for f, s in stats_by_file.items() if s["n_peaks"] is not None}
+    max_mzs = {f: s["max_mz"]  for f, s in stats_by_file.items() if s["max_mz"]  is not None}
+      → Extracts the two metrics from the stats dict, skipping files with
+        None values (failed extractions cannot contribute to the mean).
+
+    for label, values_dict in [("peak count", counts), ("max m/z", max_mzs)]:
+      → Runs the same z-score algorithm for both metrics. This loop structure
+        avoids duplicating the calculation twice.
+
+    if len(vals) < 3: continue
+      → Cannot compute a meaningful standard deviation with fewer than 3 files.
+
+    if sig == 0: continue
+      → All files have identical values — no outliers possible. Also avoids
+        division by zero in the z-score calculation.
+
+    z = abs(v - mu) / sig
+      → Z-score: how many standard deviations is this file from the mean?
+        |z| > 2.0 triggers the outlier flag.
+
+    direction = "high" if v > mu else "low"
+      → Tells the reviewer whether the file has unusually many/few peaks
+        or an unusually high/low max m/z.
+
+  WHY Z-SCORES:
+    Z-scores normalise metrics regardless of their scale. Peak count might
+    range 10-100; max m/z might range 200-600. Raw differences would make
+    the larger-scale metric dominate. Z-scores put both on the same scale.
+
+  ALTERNATIVES:
+    - IQR (interquartile range): More robust to non-normal distributions.
+    - Isolation Forest: Machine-learning approach, overkill for 251 files.
+    - Manual thresholds (e.g., flag if peaks < 5): Fragile if the batch changes.
+
+
+--------------------------------------------------------------------------------
+  SECTION 9 — validate()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def validate(outputs_dir=OUTPUTS_DIR, report_path=REPORT_FILE, spot_n=SPOT_N):
+        json_files = sorted(outputs_dir.glob("*.json"))
+        if not json_files:
+            sys.exit(f"[validate] No JSON files found in '{outputs_dir}'.")
+
+        with _Tee(report_path) as out:
+            out(SEP, "  GCMS JSON OUTPUT VALIDATION REPORT", SEP, ...)
+
+            # ── PASS 1: per-file checks ─────────────────────────────────────────
+            all_issues   = {}           # filename -> [issue strings]
+            stats        = {}           # filename -> {n_peaks, max_mz, ...}
+            method_count = defaultdict(int)
+
+            for path in json_files:
+                data, err = _load_json(path)
+                if err:
+                    all_issues[path.name] = [f"LOAD    could not parse JSON: {err}"]
+                    continue
+                issues = _check_file(path.name, data)
+                all_issues[path.name] = issues
+                peaks       = data.get("peaks", [])
+                intensities = [p["intensity"] for p in peaks if "intensity" in p]
+                mz_values   = [p["mz"]        for p in peaks if "mz"        in p]
+                method      = data.get("method", "unknown")
+                method_count[method] += 1
+                stats[path.name] = {
+                    "n_peaks":   len(peaks),
+                    "max_mz":    max(mz_values)   if mz_values   else None,
+                    "base_peak": max(intensities) if intensities else None,
+                    "method":    method,
+                }
+
+            # ── PASS 2: statistical outliers ────────────────────────────────────
+            outliers = _find_outliers(stats)
+            for fname, msgs in outliers.items():
+                all_issues[fname].extend(msgs)
+
+            # ── Categorise results ───────────────────────────────────────────────
+            clean_files  = [f for f, issues in all_issues.items() if not issues]
+            failed_files = [f for f, issues in all_issues.items()
+                            if any("FAILED" in i or "LOAD" in i for i in issues)]
+            warned_files = [f for f, issues in all_issues.items()
+                            if issues and f not in failed_files]
+
+            # ── Spot-check sample ────────────────────────────────────────────────
+            priority     = list(set(warned_files + failed_files))
+            remaining    = [f for f in [p.name for p in json_files] if f not in priority]
+            random.seed(42)
+            random_sample = random.sample(remaining, min(spot_n, len(remaining)))
+            spot_list = priority[:spot_n] + random_sample[:max(0, spot_n - len(priority))]
+
+            # ── 7-section report written via out(...) ────────────────────────────
+            # Section 1: Summary (totals, pipeline usage, batch statistics)
+            # Section 2: Files with issues (details per flagged file)
+            # Section 3: Issue type breakdown (count per tag: SCHEMA, PHYSICS, etc.)
+            # Section 4: Spot-check list (files to manually verify)
+            # Section 5: What to check during spot-checks
+            # Section 6: Why each check catches a real error
+            # Section 7: Recommended next steps
+
+            total  = len(json_files)
+            passed = len(clean_files)
+            rate   = passed / total * 100
+            if   rate == 100.0: out("  All outputs passed automated validation.")
+            elif rate >= 90.0:  out("  Good. Review the flagged files before using the data.")
+            elif rate >= 70.0:  out("  Moderate. Investigate warnings — a systematic error may exist.")
+            else:               out("  Poor. Likely a systematic calibration or pipeline problem.")
+
+  WHAT IT DOES:
+    The main orchestrator. Runs in two passes, then generates a 7-section report
+    written to both the console and a text file via the _Tee context manager.
+
+  TWO-PASS DESIGN:
+    Pass 1 (per-file): Each JSON is loaded and checked in isolation.
+                       Builds the all_issues and stats dicts.
+    Pass 2 (statistical): _find_outliers() requires all files to be loaded
+                          first so batch mean/std can be computed. Outlier
+                          results are merged back into all_issues before
+                          the report is written.
+
+  CATEGORISATION:
+    clean_files  = files with an empty issues list
+    failed_files = files with FAILED or LOAD tags
+    warned_files = files with issues but not in failed_files (outliers,
+                   physics warnings, etc.)
+
+  SPOT-CHECK LOGIC:
+    priority files (warned + failed) are always in the spot-check list.
+    Additional random files fill the list to spot_n total.
+    random.seed(42) = same random selection every run, so the reviewer
+    knows which files were flagged without the list changing on re-runs.
+
+  PASS/FAIL GRADING:
+    rate == 100%: All passed.
+    rate >= 90%:  Good — review flagged files.
+    rate >= 70%:  Moderate — investigate for systematic errors.
+    else:         Poor — likely a systematic calibration problem.
+
+
+--------------------------------------------------------------------------------
+  SECTION 10 — Entry Point
+--------------------------------------------------------------------------------
+
+  CODE:
+    if __name__ == "__main__":
+        import argparse
+
+        ap = argparse.ArgumentParser(
+            description="Validate GCMS JSON outputs produced by final.py",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=(
+                "Examples:\n"
+                "  python validate.py\n"
+                "  python validate.py --outputs outputs/ --report validation_report.txt"
+            ),
+        )
+        ap.add_argument("--outputs", default="outputs",
+                        help="Folder containing JSON output files (default: outputs/)")
+        ap.add_argument("--report",  default="validation_report.txt",
+                        help="Path to write the report (default: validation_report.txt)")
+        ap.add_argument("--spot",    type=int, default=15,
+                        help="Number of files to include in the spot-check list (default: 15)")
+        args = ap.parse_args()
+
+        validate(Path(args.outputs), Path(args.report), args.spot)
+
+  KEY LINE EXPLANATIONS:
+
+    if __name__ == "__main__":
+      → Prevents validate() from being called when validate.py is imported
+        as a module. Without this guard, any script that does
+        "from validate import _check_file" would immediately run the full
+        validation on import.
+
+    formatter_class=argparse.RawDescriptionHelpFormatter
+      → Preserves the newline formatting in the epilog examples string.
+        Without it, argparse would collapse the multi-line examples into
+        one line.
+
+    ARGUMENTS:
+      --outputs : Folder of JSON files to check (default: outputs/)
+      --report  : Where to write the report  (default: validation_report.txt)
+      --spot    : Spot-check list size        (default: 15)
+      All have sensible defaults so "python validate.py" works with no flags.
+
+
+================================================================================
+  FILE 3 — benchmark.py
+  Parallel Performance Benchmarker
+================================================================================
+
+--------------------------------------------------------------------------------
+  SECTION 1 — MODULE DOCSTRING
+--------------------------------------------------------------------------------
+
+  CODE:
+    """
+    benchmark.py — Performance benchmark for the GCMS PDF processor (final.py).
+
+    Measures wall-clock time across 1 -> N worker threads and writes a full report
+    to performance.txt (also mirrored to the console) covering:
+      * Speedup S = T1 / Tp
+      * Efficiency E = S / P
+      * Amdahl's Law theoretical maximum
+      * Plain-English explanation of every observed pattern
+
+    Usage
+    -----
+      python benchmark.py --input samples/
+      python benchmark.py --input samples/ --workers 1 2 4 8 11 16 22 --runs 5
+    """
+
+  WHAT IT DOES:
+    Documents the three metrics measured, the output location, and usage.
+    The usage examples show the exact command needed for the 22-core ladder.
+
+
+--------------------------------------------------------------------------------
+  SECTION 2 — IMPORTS AND CONFIG
+--------------------------------------------------------------------------------
+
+  CODE:
+    import time
+    import os
+    import sys
+    import platform
+    from pathlib import Path
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from final import process_pdf, JSON_FOLDER
+
+    OUTPUT_FILE = Path("performance.txt")
+
+  import platform
+    WHAT: Standard library platform information.
+    WHY:  platform.system(), platform.release(), platform.python_version()
+          are printed at the top of the report so results are tied to a
+          specific OS and Python version for reproducibility.
+
+  sys.path.insert(0, str(Path(__file__).parent))
+    WHY: Ensures that "from final import ..." finds final.py in the same
+         directory as benchmark.py, regardless of where the script is run from.
+         Path(__file__).parent is the directory containing benchmark.py.
+         Inserting at index 0 makes it take priority over other path entries.
+
+  from final import process_pdf, JSON_FOLDER
+    WHY: benchmark.py does not re-implement PDF processing — it reuses the
+         same process_pdf() function from final.py. This ensures benchmark
+         results reflect real production performance, not a simplified version.
+
+  OUTPUT_FILE = Path("performance.txt")
+    WHY: Centralised output path — change it once, not scattered in code.
+
+
+--------------------------------------------------------------------------------
+  SECTION 3 — _Tee class
+--------------------------------------------------------------------------------
+
+  CODE:
+    class _Tee:
+        """Writes every line to both stdout and an open file."""
+
+        def __init__(self, path):
+            self._f = open(path, "w", encoding="utf-8")
+
+        def __call__(self, *lines):
+            for line in lines:
+                print(line)
+                self._f.write(line + "\n")
+
+        def close(self):
+            self._f.close()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+  WHAT IT DOES:
+    Identical purpose to _Tee in validate.py: writes every output line to
+    both console and file simultaneously.
+
+  KEY DIFFERENCE FROM validate.py's _Tee:
+    benchmark.py's _Tee uses plain print(line) — no ASCII encoding step.
+    WHY: benchmark.py's output uses only ASCII characters (no sigma, arrows,
+    Unicode bars). No encoding protection is needed here.
+
+    validate.py's _Tee uses print(line.encode("ascii", errors="replace")...)
+    WHY: validate.py's output could include Unicode characters from JSON
+    content or error messages, which would crash on Windows cp1252 consoles.
+
+
+--------------------------------------------------------------------------------
+  SECTION 4 — MATH HELPERS
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _amdahl(f_par, p):
+        """Theoretical speedup: S(P) = 1 / ( f_s + f_p/P )."""
+        return 1.0 / ((1.0 - f_par) + f_par / p)
+
+    def _gustafson(f_ser, p):
+        """Gustafson scaled speedup: S_G(P) = P - f_s*(P-1)."""
+        return p - f_ser * (p - 1)
+
+    def _estimate_f_par(T1, Tp, P):
+        """
+        Invert Amdahl's law to find the parallel fraction from two measurements.
+          From S = 1 / (f_s + f_p/P), f_s + f_p = 1:
+               f_p = (1 - 1/S) / (1 - 1/P)
+        """
+        S = T1 / Tp
+        return max(0.0, min(1.0, (1.0 - 1.0 / S) / (1.0 - 1.0 / P)))
+
+    def _ascii_bar(value, ceiling, width=30):
+        filled = int(round(value / ceiling * width)) if ceiling > 0 else 0
+        return "█" * filled + "░" * (width - filled)
+
+  _amdahl(f_par, p)
+    WHAT: Implements Amdahl's Law.
+    FORMULA: S(P) = 1 / ( f_serial + f_parallel / P )
+    WHY: Given estimated f_par (parallel fraction) and a worker count P,
+         predicts the maximum theoretical speedup. Used to plot the "theory"
+         line in the speedup chart alongside actual measured results.
+    EXAMPLE: f_par=0.05, P=22 -> S = 1 / (0.95 + 0.05/22) = 1.05x
+             This matches the measured 1.05x in the benchmark results.
+
+  _gustafson(f_ser, p)
+    WHAT: Implements Gustafson's Law.
+    FORMULA: S_G(P) = P - f_serial * (P - 1)
+    WHY: Answers a different question than Amdahl. Amdahl asks "how much
+         faster can we process THIS FIXED dataset?" Gustafson asks "if we
+         had P-times more PDFs, could we finish in the same time?"
+         Gustafson is more optimistic because the parallel fraction grows
+         with the problem size.
+
+  _estimate_f_par(T1, Tp, P)
+    WHAT: Inverts Amdahl's Law to estimate f_par from two measurements.
+    FORMULA: f_p = (1 - 1/S) / (1 - 1/P),  where S = T1/Tp
+    WHY: We cannot directly observe how much of the code is parallel. But
+         if we measure T1 (1 worker) and Tp (P workers), we can work
+         backwards to estimate f_par.
+    max(0.0, min(1.0, ...))
+      → Clamps the result to [0, 1]. Floating-point imprecision can push
+        the estimate slightly outside valid range, especially at small P.
+
+  _ascii_bar(value, ceiling, width=30)
+    WHAT: Generates a text-based bar chart using Unicode block characters.
+    WHY:  Allows the speedup chart to be rendered directly in the text
+          report without needing matplotlib or any GUI library.
+    "█" * filled + "░" * (width - filled)
+      → Solid blocks for the filled portion, light blocks for empty.
+        The ratio filled/width visually encodes the value/ceiling ratio.
+
+
+--------------------------------------------------------------------------------
+  SECTION 5 — _run_trial()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _run_trial(pdf_files, n_workers):
+        """Process all PDFs with n_workers threads; return wall-clock seconds."""
+        JSON_FOLDER.mkdir(exist_ok=True)
+        t0 = time.perf_counter()
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            futures = [ex.submit(process_pdf, p, False, False) for p in pdf_files]
+            for fut in as_completed(futures):
+                fut.result()
+        return time.perf_counter() - t0
+
+  WHAT IT DOES:
+    Runs one complete pass of all PDFs through process_pdf() with exactly
+    n_workers threads. Returns the wall-clock duration in seconds.
+
+  KEY LINE EXPLANATIONS:
+
+    JSON_FOLDER.mkdir(exist_ok=True)
+      → Ensures the output directory exists before processing. Called at
+        the start of every trial — safe to call repeatedly due to exist_ok=True.
+
+    t0 = time.perf_counter()
+      → High-resolution timer (better than time.time() for benchmarking).
+        perf_counter() uses the OS's highest-resolution clock, typically
+        nanosecond precision on modern systems.
+
+    ex.submit(process_pdf, p, False, False)
+      → The two False arguments are: cross_validate=False, write_visual=False.
+        Both are disabled during benchmarking to measure pure processing speed
+        without visual output overhead distorting the results.
+
+    for fut in as_completed(futures): fut.result()
+      → Collects all futures. fut.result() re-raises any exception that
+        occurred in the worker thread, so benchmark failures are not silently
+        swallowed.
+
+    return time.perf_counter() - t0
+      → Total wall-clock time after the ThreadPoolExecutor context exits.
+        The 'with' block waits for all futures to complete before exiting.
+
+  WHY MEASURE WALL CLOCK (NOT CPU TIME):
+    Wall-clock time is what the user actually waits for. CPU time would
+    be misleading: at P=22, CPU time = ~22x wall time, making parallelism
+    look like it "costs more" when in fact it saves real time.
+
+
+--------------------------------------------------------------------------------
+  SECTION 6 — _write_explanations()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def _write_explanations(out, timings, worker_counts, f_par, cpu_count, n_files):
+        T1    = timings[1]
+        max_w = max(worker_counts)
+        f_ser = 1.0 - f_par
+        S_max_measured  = T1 / timings[max_w]
+        E_max_measured  = S_max_measured / max_w
+        amdahl_infinite = 1.0 / f_ser
+
+        # FINDING 1: Sub-linear speedup / Amdahl's Law
+        #   Shows: expected speedup vs actual, serial fraction, Amdahl ceiling
+
+        # FINDING 2: Efficiency falls as core count rises
+        #   Shows: efficiency bar chart for each P, 5 compounding causes:
+        #     1) I/O bandwidth saturation (dominant)
+        #     2) Amdahl serial floor
+        #     3) Thread scheduling overhead
+        #     4) Memory bandwidth / cache thrashing
+        #     5) Python GIL (minor — GIL released by C libraries)
+
+        # FINDING 3: Diminishing returns / sweet spot
+        #   Shows: marginal speedup per extra core, identifies sweet spot
+
+        # FINDING 4: Notes specific to the machine's core count
+        #   Shows: physical cores vs hyperthreads, efficiency cliff at P=cores/2
+
+        # FINDING 5: Amdahl's Law vs Gustafson's Law
+        #   Shows: when each law applies, predicted values for both
+
+        # SECTION 3: How to verify parallel execution (Windows)
+        #   Shows: Resource Monitor, Task Manager, PowerShell monitoring script
+
+  WHAT IT DOES:
+    Generates the analysis section of performance.txt. Takes the measured
+    timings dict and produces six findings that explain every observed pattern
+    with its root cause, plus a verification guide.
+
+  KEY LINE EXPLANATIONS:
+
+    T1 = timings[1]
+      → The sequential baseline (1 worker). All speedups are relative to this.
+
+    amdahl_infinite = 1.0 / f_ser
+      → Amdahl's hard ceiling: the maximum possible speedup with infinite cores.
+        f_ser = 0.95 -> ceiling = 1/0.95 = 1.05x (matches the benchmark results).
+
+    for w in worker_counts[1:]:
+        S = T1 / timings[w]
+        delta_S = S - prev_S
+        per_core = delta_S / delta_w
+      → Marginal speedup analysis: how much additional speedup does each extra
+        core provide? When per_core < 0.5, additional cores return less than
+        half their "ideal" contribution — diminishing returns.
+
+    sweet_spot_w = w (where per_core >= 0.5)
+      → The sweet spot is the last worker count where each added core still
+        contributes >= 0.5x speedup gain. Beyond this, the serial fraction
+        and overhead dominate.
+
+    for w in worker_counts[1:]:
+        expected_cpu = w * timings[w]
+      → Mathematical proof of parallelism:
+          If P cores are all busy, total CPU-seconds = P * wall_seconds.
+          Comparing this to the 1-worker CPU-seconds proves utilisation.
+
+
+--------------------------------------------------------------------------------
+  SECTION 7 — benchmark()
+--------------------------------------------------------------------------------
+
+  CODE:
+    def benchmark(pdf_folder, worker_counts=None, runs=3):
+        pdf_files = sorted(Path(pdf_folder).glob("*.pdf"))
+        if not pdf_files:
+            sys.exit(f"[benchmark] No PDFs found in '{pdf_folder}'.")
+
+        cpu_count = os.cpu_count() or 1
+        n_files   = len(pdf_files)
+
+        # Build default worker ladder for current machine
+        if worker_counts is None:
+            wset = {1}
+            w = 2
+            while w < cpu_count:
+                wset.add(w)
+                w *= 2
+            wset.add(cpu_count // 2)   # midpoint (catches hyperthreading boundary)
+            wset.add(cpu_count)
+            worker_counts = sorted(w for w in wset if w >= 1)
+
+        worker_counts = [w for w in worker_counts if w <= n_files] or [1]
+
+        with _Tee(OUTPUT_FILE) as out:
+            out(SEP, "  GCMS PDF PROCESSOR — PARALLEL PERFORMANCE REPORT", SEP, ...)
+
+            # Phase 1: Run all trials, record timings
+            timings   = {}
+            all_times = {}
+            for w in worker_counts:
+                trial_times = []
+                for r in range(runs):
+                    t = _run_trial(pdf_files, w)
+                    trial_times.append(t)
+                    out(f"  workers={w:2d}  [{'█'*(r+1)+'░'*(runs-r-1)}] run {r+1}/{runs}  {t:.3f}s")
+                avg = sum(trial_times) / len(trial_times)
+                timings[w]   = avg
+                all_times[w] = trial_times
+                out(f"           avg={avg:.3f}s   min={min(trial_times):.3f}s   max={max(trial_times):.3f}s")
+
+            # Phase 2: Compute metrics
+            T1    = timings[1]
+            ref_w = max((w for w in worker_counts if w > 1), default=None)
+            f_par = _estimate_f_par(T1, timings[ref_w], ref_w) if ref_w else 0.95
+            f_ser = 1.0 - f_par
+
+            # Phase 3: Metrics table
+            for w in worker_counts:
+                Tp  = timings[w]
+                S   = T1 / Tp
+                E   = S / w
+                Sth = _amdahl(f_par, w)
+                out(f"  {w:>4}  {Tp:>10.3f}  {S:>10.2f}x  {E:>12.1%}  {Sth:>12.2f}x")
+
+            # Phase 4: ASCII speedup chart (actual vs Amdahl theory)
+            for w in worker_counts:
+                S_act = T1 / timings[w]
+                S_th  = _amdahl(f_par, w)
+                out(f"  P={w:2d}  actual  [{_ascii_bar(S_act, chart_ceil)}] {S_act:.2f}x")
+                out(f"        theory  [{_ascii_bar(S_th,  chart_ceil)}] {S_th:.2f}x")
+
+            # Phase 5: Throughput (PDFs/second)
+            for w in worker_counts:
+                tp   = n_files / timings[w]
+                gain = tp / base_tp
+                out(f"  {w:2d} worker(s) : {tp:7.2f} PDFs/s  [bar]  x{gain:.2f} baseline")
+
+            # Phase 6: Written analysis (calls _write_explanations)
+            _write_explanations(out, timings, worker_counts, f_par, cpu_count, n_files)
+
+  WHAT IT DOES:
+    The main benchmark orchestrator. Discovers PDFs, builds the worker ladder,
+    runs all trials with progress indicators, computes all metrics, and writes
+    a complete 3-section report.
+
+  KEY LINE EXPLANATIONS:
+
+    wset = {1}; w = 2; while w < cpu_count: wset.add(w); w *= 2
+    wset.add(cpu_count // 2); wset.add(cpu_count)
+      → Builds a worker ladder by doubling: {1, 2, 4, 8, ...}.
+        cpu_count // 2 adds the midpoint (catches the hyperthreading boundary
+        where efficiency often drops sharply).
+        cpu_count adds the machine's full core count.
+        For a 22-core machine: {1, 2, 4, 8, 11, 16, 22}
+
+    worker_counts = [w for w in worker_counts if w <= n_files] or [1]
+      → No point spawning more workers than files — extra threads would idle.
+        "or [1]" ensures at least one worker even if the list is empty.
+
+    avg = sum(trial_times) / len(trial_times)
+      → Average across 'runs' trials per worker count. Multiple runs reduce
+        the effect of system noise (OS scheduler jitter, disk cache state).
+
+    ref_w = max((w for w in worker_counts if w > 1), default=None)
+    f_par = _estimate_f_par(T1, timings[ref_w], ref_w)
+      → Uses the HIGHEST worker count > 1 for f_par estimation. The largest P
+        gives the most accurate inversion because the parallel fraction's effect
+        is most visible at high P.
+
+    chart_ceil = max(max(T1/timings[w] for w in ...), _amdahl(f_par, max_w)) * 1.15
+      → The chart ceiling is 115% of the highest value (actual or theoretical).
+        The 1.15 factor adds visual headroom so bars don't hit the ceiling.
+
+    S = T1 / Tp   (Speedup)
+      → The ratio of sequential time to parallel time. S = 1.0 means no
+        improvement; S = 2.0 means twice as fast.
+
+    E = S / P   (Efficiency)
+      → Fraction of each core's capacity being used productively.
+        E = 100% means perfect scaling (impossible in practice).
+        E = 26% at P=4 means 74% of the 4 cores' capacity is overhead.
+
+
+--------------------------------------------------------------------------------
+  SECTION 8 — Entry Point
+--------------------------------------------------------------------------------
+
+  CODE:
+    if __name__ == "__main__":
+        import argparse
+
+        ap = argparse.ArgumentParser(
+            description=(
+                "Benchmark GCMS PDF processor across 1...N workers.\n"
+                "Results + explanations are written to performance.txt."
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=(
+                "Examples:\n"
+                "  python benchmark.py --input samples/\n"
+                "  python benchmark.py --input samples/ "
+                "--workers 1 2 4 8 11 16 22 --runs 5"
+            ),
+        )
+        ap.add_argument("--input",   default="samples",
+                        help="Folder of PDF files (default: samples/)")
+        ap.add_argument("--workers", nargs="+", type=int,
+                        help="Worker counts to test "
+                             "(default: 1 2 4 8 ... cpu//2 cpu_count)")
+        ap.add_argument("--runs",    type=int, default=3,
+                        help="Trials per config for averaging (default: 3)")
+        args = ap.parse_args()
+
+        benchmark(args.input, args.workers, args.runs)
+
+  KEY LINE EXPLANATIONS:
+
+    ap.add_argument("--workers", nargs="+", type=int, ...)
+      → nargs="+" means: accept one or more space-separated integers.
+        "--workers 1 2 4 8 22" stores [1, 2, 4, 8, 22] as a Python list.
+        If omitted, args.workers is None, and benchmark() builds the
+        default ladder automatically.
+
+    ap.add_argument("--runs", type=int, default=3, ...)
+      → Number of timing trials per worker count. More runs = more accurate
+        average (reduces jitter) but takes longer. 3 is the default tradeoff.
+        5 runs were used for the final performance.txt results.
+
+    USAGE EXAMPLES:
+      python benchmark.py --input samples/
+        Runs with auto-detected core ladder, 3 runs each.
+
+      python benchmark.py --input samples/ --workers 1 2 4 8 11 16 22 --runs 5
+        Runs the exact 22-core ladder with 5 trials each, producing
+        the results stored in performance.txt.
+
+
+================================================================================
+  END OF EXPLANATION
+================================================================================

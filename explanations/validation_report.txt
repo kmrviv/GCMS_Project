@@ -1,0 +1,429 @@
+
+========================================================================
+  GCMS JSON OUTPUT VALIDATION REPORT
+========================================================================
+  Source folder : C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\outputs
+  Files checked : 1002
+  Report        : C:\Users\VIVEK KUMAR\OneDrive\Desktop\GCMS_Project\validation_report.txt
+========================================================================
+
+  SECTION 1 — SUMMARY
+------------------------------------------------------------------------
+
+  Total files    : 1002
+  PASSED (clean) : 950
+  WARNINGS       : 52
+  FAILED         : 0
+
+  Pipeline usage :
+    raster    :    4 files  (0.4%)
+    vector    :  998 files  (99.6%)
+
+  Peak count across batch:
+    min    : 0
+    max    : 374
+    mean   : 77.6
+    std dev: 52.0
+
+  Highest m/z across batch:
+    min    : 28
+    max    : 180432
+    mean   : 440.6
+
+  SECTION 2 — FILES WITH ISSUES
+------------------------------------------------------------------------
+
+  [WARN  ] 151A.json
+           peaks=211  max_mz=318  base=100.0%  method=vector
+           >> OUTLIER peak count = 211  (mean=77.6, sd=52.0, z=2.6, high)
+
+  [WARN  ] 159A.json
+           peaks=320  max_mz=462  base=100.0%  method=vector
+           >> WARN    cross-validate: bar count mismatch — vector=320, raster=187 (42% diff)
+           >> WARN    cross-validate: 107 m/z only in vector: [39, 40, 41, 42, 43, 44, 45, 46, 47, 51]
+           >> OUTLIER peak count = 320  (mean=77.6, sd=52.0, z=4.7, high)
+
+  [WARN  ] 160A.json
+           peaks=308  max_mz=405  base=100.0%  method=vector
+           >> OUTLIER peak count = 308  (mean=77.6, sd=52.0, z=4.4, high)
+
+  [WARN  ] 161A.json
+           peaks=274  max_mz=417  base=100.0%  method=vector
+           >> OUTLIER peak count = 274  (mean=77.6, sd=52.0, z=3.8, high)
+
+  [WARN  ] 170A.json
+           peaks=209  max_mz=316  base=100.0%  method=vector
+           >> OUTLIER peak count = 209  (mean=77.6, sd=52.0, z=2.5, high)
+
+  [WARN  ] 172A.json
+           peaks=187  max_mz=297  base=100.0%  method=vector
+           >> OUTLIER peak count = 187  (mean=77.6, sd=52.0, z=2.1, high)
+
+  [WARN  ] 174A.json
+           peaks=241  max_mz=303  base=100.0%  method=vector
+           >> OUTLIER peak count = 241  (mean=77.6, sd=52.0, z=3.1, high)
+
+  [WARN  ] 184A.json
+           peaks=200  max_mz=302  base=100.0%  method=vector
+           >> OUTLIER peak count = 200  (mean=77.6, sd=52.0, z=2.4, high)
+
+  [WARN  ] 185A.json
+           peaks=374  max_mz=609  base=100.0%  method=vector
+           >> OUTLIER peak count = 374  (mean=77.6, sd=52.0, z=5.7, high)
+
+  [WARN  ] 196A.json
+           peaks=374  max_mz=609  base=100.0%  method=vector
+           >> OUTLIER peak count = 374  (mean=77.6, sd=52.0, z=5.7, high)
+
+  [WARN  ] 198A.json
+           peaks=220  max_mz=306  base=100.0%  method=vector
+           >> OUTLIER peak count = 220  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 200A.json
+           peaks=185  max_mz=328  base=100.0%  method=vector
+           >> OUTLIER peak count = 185  (mean=77.6, sd=52.0, z=2.1, high)
+
+  [WARN  ] 201A.json
+           peaks=192  max_mz=304  base=100.0%  method=vector
+           >> OUTLIER peak count = 192  (mean=77.6, sd=52.0, z=2.2, high)
+
+  [WARN  ] 211A.json
+           peaks=215  max_mz=304  base=100.0%  method=vector
+           >> OUTLIER peak count = 215  (mean=77.6, sd=52.0, z=2.6, high)
+
+  [WARN  ] 213A.json
+           peaks=222  max_mz=376  base=100.0%  method=vector
+           >> OUTLIER peak count = 222  (mean=77.6, sd=52.0, z=2.8, high)
+
+  [WARN  ] 214A.json
+           peaks=240  max_mz=304  base=100.0%  method=vector
+           >> OUTLIER peak count = 240  (mean=77.6, sd=52.0, z=3.1, high)
+
+  [WARN  ] 215A.json
+           peaks=228  max_mz=304  base=100.0%  method=vector
+           >> OUTLIER peak count = 228  (mean=77.6, sd=52.0, z=2.9, high)
+
+  [WARN  ] 221A.json
+           peaks=192  max_mz=304  base=100.0%  method=vector
+           >> OUTLIER peak count = 192  (mean=77.6, sd=52.0, z=2.2, high)
+
+  [WARN  ] 223A.json
+           peaks=211  max_mz=318  base=100.0%  method=vector
+           >> OUTLIER peak count = 211  (mean=77.6, sd=52.0, z=2.6, high)
+
+  [WARN  ] 241A.json
+           peaks=246  max_mz=358  base=100.0%  method=vector
+           >> OUTLIER peak count = 246  (mean=77.6, sd=52.0, z=3.2, high)
+
+  [WARN  ] 243A.json
+           peaks=220  max_mz=405  base=100.0%  method=vector
+           >> OUTLIER peak count = 220  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 254A.json
+           peaks=324  max_mz=446  base=100.0%  method=vector
+           >> OUTLIER peak count = 324  (mean=77.6, sd=52.0, z=4.7, high)
+
+  [WARN  ] 256A.json
+           peaks=324  max_mz=446  base=100.0%  method=vector
+           >> OUTLIER peak count = 324  (mean=77.6, sd=52.0, z=4.7, high)
+
+  [WARN  ] 257A.json
+           peaks=220  max_mz=405  base=100.0%  method=vector
+           >> OUTLIER peak count = 220  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 270A.json
+           peaks=258  max_mz=404  base=100.0%  method=vector
+           >> OUTLIER peak count = 258  (mean=77.6, sd=52.0, z=3.5, high)
+
+  [WARN  ] 271A.json
+           peaks=233  max_mz=401  base=100.0%  method=vector
+           >> OUTLIER peak count = 233  (mean=77.6, sd=52.0, z=3.0, high)
+
+  [WARN  ] 276A.json
+           peaks=211  max_mz=495  base=100.0%  method=vector
+           >> OUTLIER peak count = 211  (mean=77.6, sd=52.0, z=2.6, high)
+
+  [WARN  ] 286A.json
+           peaks=0  max_mz=None  base=None%  method=raster
+           >> EMPTY   no peaks extracted
+
+  [WARN  ] 345A.json
+           peaks=183  max_mz=365  base=100.0%  method=vector
+           >> OUTLIER peak count = 183  (mean=77.6, sd=52.0, z=2.0, high)
+
+  [WARN  ] 350A.json
+           peaks=0  max_mz=None  base=None%  method=raster
+           >> EMPTY   no peaks extracted
+
+  [WARN  ] 354A.json
+           peaks=20  max_mz=180432  base=100.0%  method=vector
+           >> PHYSICS 20 m/z value(s) outside [2, 2000]: [180432, 162604, 161927, 136539, 135862]
+           >> PHYSICS negative m/z detected: -192155
+           >> ORDER   m/z values are not sorted ascending (may indicate extraction ordering bug)
+           >> WARN    out-of-range m/z: [180432, 162604, 161927, 136539, 135862, 118033, 100205, 74817, 73463, 48075, 8243, 7566, 6889, -187303, -188657, -189334, -190011, -190800, -191478, -192155]
+           >> OUTLIER max m/z = 180432  (mean=440.6, sd=5698.6, z=31.6, high)
+
+  [WARN  ] 374A.json
+           peaks=220  max_mz=343  base=100.0%  method=vector
+           >> OUTLIER peak count = 220  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 386A.json
+           peaks=274  max_mz=417  base=100.0%  method=vector
+           >> OUTLIER peak count = 274  (mean=77.6, sd=52.0, z=3.8, high)
+
+  [WARN  ] 449A.json
+           peaks=183  max_mz=328  base=100.0%  method=vector
+           >> OUTLIER peak count = 183  (mean=77.6, sd=52.0, z=2.0, high)
+
+  [WARN  ] 453A.json
+           peaks=197  max_mz=436  base=100.0%  method=vector
+           >> OUTLIER peak count = 197  (mean=77.6, sd=52.0, z=2.3, high)
+
+  [WARN  ] 458A.json
+           peaks=188  max_mz=427  base=100.0%  method=vector
+           >> OUTLIER peak count = 188  (mean=77.6, sd=52.0, z=2.1, high)
+
+  [WARN  ] 613A.json
+           peaks=191  max_mz=373  base=100.0%  method=vector
+           >> OUTLIER peak count = 191  (mean=77.6, sd=52.0, z=2.2, high)
+
+  [WARN  ] 702A.json
+           peaks=184  max_mz=766  base=100.0%  method=vector
+           >> OUTLIER peak count = 184  (mean=77.6, sd=52.0, z=2.0, high)
+
+  [WARN  ] 728A.json
+           peaks=183  max_mz=406  base=100.0%  method=vector
+           >> OUTLIER peak count = 183  (mean=77.6, sd=52.0, z=2.0, high)
+
+  [WARN  ] 75A.json
+           peaks=232  max_mz=530  base=100.0%  method=vector
+           >> OUTLIER peak count = 232  (mean=77.6, sd=52.0, z=3.0, high)
+
+  [WARN  ] 795A.json
+           peaks=232  max_mz=455  base=100.0%  method=vector
+           >> OUTLIER peak count = 232  (mean=77.6, sd=52.0, z=3.0, high)
+
+  [WARN  ] 796A.json
+           peaks=231  max_mz=472  base=100.0%  method=vector
+           >> OUTLIER peak count = 231  (mean=77.6, sd=52.0, z=2.9, high)
+
+  [WARN  ] 801A.json
+           peaks=226  max_mz=433  base=100.0%  method=vector
+           >> OUTLIER peak count = 226  (mean=77.6, sd=52.0, z=2.9, high)
+
+  [WARN  ] 810A.json
+           peaks=218  max_mz=469  base=100.0%  method=vector
+           >> OUTLIER peak count = 218  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 849A.json
+           peaks=231  max_mz=359  base=100.0%  method=vector
+           >> OUTLIER peak count = 231  (mean=77.6, sd=52.0, z=2.9, high)
+
+  [WARN  ] 85A.json
+           peaks=229  max_mz=358  base=100.0%  method=vector
+           >> OUTLIER peak count = 229  (mean=77.6, sd=52.0, z=2.9, high)
+
+  [WARN  ] 938A.json
+           peaks=262  max_mz=624  base=100.0%  method=vector
+           >> OUTLIER peak count = 262  (mean=77.6, sd=52.0, z=3.5, high)
+
+  [WARN  ] 939A.json
+           peaks=201  max_mz=505  base=100.0%  method=vector
+           >> OUTLIER peak count = 201  (mean=77.6, sd=52.0, z=2.4, high)
+
+  [WARN  ] 948A.json
+           peaks=195  max_mz=306  base=100.0%  method=vector
+           >> OUTLIER peak count = 195  (mean=77.6, sd=52.0, z=2.3, high)
+
+  [WARN  ] 988A.json
+           peaks=241  max_mz=506  base=100.0%  method=vector
+           >> OUTLIER peak count = 241  (mean=77.6, sd=52.0, z=3.1, high)
+
+  [WARN  ] 989A.json
+           peaks=217  max_mz=465  base=100.0%  method=vector
+           >> OUTLIER peak count = 217  (mean=77.6, sd=52.0, z=2.7, high)
+
+  [WARN  ] 995A.json
+           peaks=226  max_mz=446  base=100.0%  method=vector
+           >> OUTLIER peak count = 226  (mean=77.6, sd=52.0, z=2.9, high)
+
+  SECTION 3 — ISSUE TYPE BREAKDOWN
+------------------------------------------------------------------------
+
+  OUTLIER   : 50 occurrence(s)
+  WARN      : 3 occurrence(s)
+  EMPTY     : 2 occurrence(s)
+  PHYSICS   : 2 occurrence(s)
+  ORDER     : 1 occurrence(s)
+
+  SECTION 4 — SPOT-CHECK SAMPLE FOR MANUAL VERIFICATION
+------------------------------------------------------------------------
+
+  You cannot check all 251 PDFs by hand. Instead, check a
+  representative random sample. These files were randomly selected:
+  open the PDF alongside its visual PNG and JSON to verify.
+
+  159A.json
+    JSON   : outputs\159A.json
+  visual: visuals\159A.png
+
+  170A.json
+    JSON   : outputs\170A.json
+  (no visual — re-run with --visual)
+
+  172A.json
+    JSON   : outputs\172A.json
+  (no visual — re-run with --visual)
+
+  174A.json
+    JSON   : outputs\174A.json
+  (no visual — re-run with --visual)
+
+  201A.json
+    JSON   : outputs\201A.json
+  (no visual — re-run with --visual)
+
+  213A.json
+    JSON   : outputs\213A.json
+  (no visual — re-run with --visual)
+
+  276A.json
+    JSON   : outputs\276A.json
+  (no visual — re-run with --visual)
+
+  350A.json
+    JSON   : outputs\350A.json
+  (no visual — re-run with --visual)
+
+  453A.json
+    JSON   : outputs\453A.json
+  (no visual — re-run with --visual)
+
+  458A.json
+    JSON   : outputs\458A.json
+  (no visual — re-run with --visual)
+
+  728A.json
+    JSON   : outputs\728A.json
+  (no visual — re-run with --visual)
+
+  795A.json
+    JSON   : outputs\795A.json
+  (no visual — re-run with --visual)
+
+  85A.json
+    JSON   : outputs\85A.json
+  (no visual — re-run with --visual)
+
+  939A.json
+    JSON   : outputs\939A.json
+  (no visual — re-run with --visual)
+
+  948A.json
+    JSON   : outputs\948A.json
+  (no visual — re-run with --visual)
+
+  SECTION 5 — WHAT TO CHECK DURING MANUAL SPOT-CHECKS
+------------------------------------------------------------------------
+
+  For each spot-check file, open THREE things side by side:
+    A) The original PDF
+    B) The visual overlay PNG  (visuals/<name>.png)
+    C) The JSON output         (outputs/<name>.json)
+
+  WHAT TO VERIFY IN THE VISUAL (PNG):
+    • Red horizontal line   = detected x-axis (baseline)
+      Should sit exactly on the x-axis of the chart.
+    • Blue vertical line    = detected y-axis
+      Should sit exactly on the left edge of the chart.
+    • Green dot             = axis intersection (origin)
+    • Orange boxes/dots     = detected x-axis tick labels
+      Should align with the numeric labels printed under the axis.
+    • Orange vertical line  = right edge of chart
+    • Red dots              = detected bar tops
+      Should sit at the top of every visible bar in the chart.
+
+  WHAT TO VERIFY IN THE JSON:
+    • 'method' should be 'vector' for clean digital PDFs.
+      If it is 'raster', the vector pipeline failed — check why.
+    • The highest-intensity peak should have intensity = 100.0.
+    • m/z values should match the bars visible in the PDF chart.
+    • Peak count should look reasonable for the chart density.
+
+  RED FLAGS TO LOOK FOR:
+    • Red horizontal line is in the wrong position (wrong axis found)
+    • Red dots are on text or noise rather than bar tops
+    • Bars visible in the PDF that have no red dot (missed peaks)
+    • Red dots with no corresponding bar (ghost peaks)
+    • JSON has m/z 0 or negative values
+    • JSON base peak intensity very different from 100.0
+
+  SECTION 6 — WHY EACH CHECK CATCHES A REAL ERROR
+------------------------------------------------------------------------
+
+  SCHEMA checks:
+    Catch corrupted or truncated JSON files — e.g., if the process
+    was killed mid-write, the file may be missing closing braces.
+
+  PHYSICS — base peak = 100%:
+    In a normalised mass spectrum this is true BY DEFINITION.
+    The lab instrument always normalises the tallest bar to 100%.
+    If your JSON shows a base peak of e.g. 73%, the y-axis
+    calibration drifted — the '100' label was not found or was
+    misread. Every peak intensity in that file is proportionally wrong.
+
+  PHYSICS — m/z range [2, 2000]:
+    GC-MS unit-resolution instruments measure integer masses.
+    m/z < 2 means a fragment lighter than H2+ — physically impossible.
+    m/z > 2000 exceeds the scan range of standard GC-MS hardware.
+    Out-of-range values indicate a calibration failure where the
+    x-axis tick labels were misread.
+
+  COMPLETENESS — minimum 3 peaks:
+    Real mass spectra of organic compounds always produce many
+    fragment ions. A spectrum with 1–2 peaks almost certainly means
+    the bar scanner missed most of the chart.
+
+  DUPLICATE m/z:
+    A unit-resolution instrument produces exactly one bar per mass
+    unit. Duplicates mean two bars were assigned the same m/z —
+    the x-calibration is off by < 0.5 m/z units, causing two nearby
+    bars to round to the same integer.
+
+  OUTLIER detection (peak count):
+    If one file has 5 peaks and the batch average is 45, that file
+    almost certainly has a detection problem — not a simple spectrum.
+    The outlier flag tells you which files deserve a second look
+    without requiring you to read every JSON manually.
+
+  OUTLIER detection (max m/z):
+    The molecular ion (highest m/z bar) is a fingerprint of the
+    compound. A file whose max m/z is far from the batch mean either
+    contains a very different compound class OR has an x-calibration
+    error that pushed all m/z values too high or too low.
+
+  SECTION 7 — RECOMMENDED NEXT STEPS
+------------------------------------------------------------------------
+
+  1. REVIEW 52 FILE(S) WITH WARNINGS:
+     These extracted data but flagged potential issues.
+     Re-run with --visual and inspect the overlay PNG to confirm
+     whether the axis detection and bar tops look correct.
+     Command:
+       python final.py --input samples/<filename>.pdf
+
+  3. GENERATE VISUALS FOR SPOT-CHECK FILES:
+     python final.py --input samples/ --visual
+     Then open visuals/<name>.png alongside the PDF for each
+     file in the spot-check list above.
+
+  4. RE-RUN WITH CROSS-VALIDATION ON SUSPICIOUS FILES:
+     python final.py --input samples/<name>.pdf --cross-validate
+     This runs both the vector AND raster pipelines and reports
+     any discrepancy in peak counts or m/z values.
+
+========================================================================
+  RESULT: 950/1002 files clean (94.8% pass rate)
+  Good. Review the flagged files before using the data.
+========================================================================
+
