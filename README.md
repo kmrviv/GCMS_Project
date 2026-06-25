@@ -161,7 +161,7 @@ be added here once available. For now, please cite this repository:
   author       = {Kumar, Vivek},
   title        = {GCMS Spectrum Extractor},
   year         = {2026},
-  howpublished = {\url{https://github.com/<your-username>/<your-repo>}},
+  howpublished = {\url{https://github.com/kmrviv/GCMS_Project}},
   note         = {Precursor work; ML models forthcoming}
 }
 ```
