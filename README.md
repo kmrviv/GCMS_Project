@@ -22,9 +22,7 @@ are the subject of future work.
 ## Future Work
 
 - Train ML models on the extracted dataset for compound identification and
-  spectral prediction (the `peaks_long` view in `build_db.py` is the ML-ready
-  feature table).
-- Extend extraction to additional chart styles and scanned/photographed spectra.
+  spectral prediction.
 
 
 ## Validation
